@@ -1,0 +1,171 @@
+# SPDX-FileCopyrightText: 2026 Gaze CN fork
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Builds the localized binaries and publishes them as a GitHub Release.
+# It is deliberately much smaller than upstream's cd.yml: a fork has no
+# package-signing key, no self-hosted apt/dnf repository and no Copr project,
+# so it ships plain tarballs with checksums instead.
+
+name: Release (zh-CN)
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build and publish, e.g. v0.5.1-cn.3
+        required: true
+        type: string
+      notes:
+        description: Release notes (Markdown)
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish, e.g. v0.5.1-cn.3
+        required: true
+        type: string
+      notes:
+        description: Release notes (Markdown)
+        required: false
+        default: ""
+        type: string
+  push:
+    tags:
+      - "v*-cn.*"
+
+concurrency:
+  group: release-cn-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  JUST_VERSION: 1.59.0
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build (linux-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Set up build host
+        uses: ./.github/actions/setup-build
+        with:
+          just-version: ${{ env.JUST_VERSION }}
+          cache-key: release-cn-${{ matrix.arch }}
+
+      - name: Build binaries
+        run: VERSION="${TAG#v}" just build-rust
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          name="gaze-cn-${TAG}-linux-${{ matrix.arch }}"
+          stage="dist/$name"
+          mkdir -p "$stage"
+          install -Dm0755 target/release/gaze "$stage/gaze"
+          install -Dm0755 target/release/gaze-gui "$stage/gaze-gui"
+          install -Dm0755 target/release/gazed "$stage/gazed"
+          install -Dm0755 target/release/libpam_gaze.so "$stage/libpam_gaze.so"
+          install -Dm0755 target/release/libpam_gaze_grosshack.so "$stage/libpam_gaze_grosshack.so"
+          if [ -f target/release/libonnxruntime.so ]; then
+            install -Dm0755 target/release/libonnxruntime.so "$stage/libonnxruntime.so"
+          fi
+          cp LICENSE "$stage/LICENSE"
+          if [ -f target/release/onnxruntime-LICENSE ]; then
+            cp target/release/onnxruntime-LICENSE "$stage/"
+            cp target/release/onnxruntime-NOTICES "$stage/"
+          fi
+          cp localization/README.md "$stage/汉化说明.md"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          sha256sum "dist/$name.tar.gz" > "dist/$name.tar.gz.sha256"
+          ls -lh dist/*.tar.gz*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          retention-days: 3
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: dist
+          merge-multiple: true
+
+      - name: Compose notes
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          if [ -n "$NOTES" ]; then
+            printf '%s\n' "$NOTES" > release-notes.md
+          else
+            {
+              echo "本版本由 \`${TAG}\` 构建。"
+              echo
+              echo "- 汉化词表：$(python3 -c 'import json,glob;print(sum(len([k for k in json.load(open(p)) if not k.startswith("_")]) for p in glob.glob("localization/zh-CN/*.json")))') 条"
+              echo "- 上游项目：[GunduLabs/gaze](https://github.com/GunduLabs/gaze)"
+            } > release-notes.md
+          fi
+          {
+            echo
+            echo "### 校验"
+            echo '```'
+            cat dist/*.sha256
+            echo '```'
+            echo
+            echo "### 安装"
+            echo '```bash'
+            echo "tar -xzf gaze-cn-${TAG}-linux-x86_64.tar.gz"
+            echo "sudo install -Dm0755 gaze-cn-${TAG}-linux-x86_64/{gaze,gaze-gui,gazed} /usr/bin/"
+            echo '```'
+          } >> release-notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist/*.tar.gz dist/*.sha256 \
+              --title "Gaze 中文版 ${TAG}" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi

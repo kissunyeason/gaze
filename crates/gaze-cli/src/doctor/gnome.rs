@@ -150,9 +150,9 @@ pub(super) fn gdm_greeter_readiness() -> GdmGreeterReadiness {
 pub(super) fn gdm_selinux_fix() -> String {
     let path = selinux::policy_path(selinux::GDM_CAMERA_MODULE);
     if Path::new(&path).exists() {
-        format!("Run `sudo semodule -i {path}`, then reboot.")
+        format!("请运行 `sudo semodule -i {path}`，然后重启系统。")
     } else {
-        format!("Reinstall the Gaze GNOME extension package to restore {path}, then reboot.")
+        format!("请重装 Gaze GNOME 扩展包以恢复 {path}，然后重启系统。")
     }
 }
 
@@ -168,29 +168,29 @@ pub(super) fn report_gdm_camera_policy(report: &mut Report, policy: ModuleState)
     let module = selinux::GDM_CAMERA_MODULE;
     match policy {
         ModuleState::Loaded => report.pass(
-            "GDM camera SELinux policy",
-            format!("{module} is loaded, so the greeter can open the camera"),
+            "GDM 摄像头 SELinux 策略",
+            format!("已加载 {module}，登录界面可以打开摄像头"),
         ),
         ModuleState::NotLoaded => report.error(
-            "GDM camera SELinux policy",
+            "GDM 摄像头 SELinux 策略",
             format!(
                 "SELinux is enforcing and {module} is not loaded, so the GDM greeter is denied the camera and the login screen never scans"
             ),
             gdm_selinux_fix(),
         ),
         ModuleState::NeedsRoot => report.warning(
-            "GDM camera SELinux policy",
+            "GDM 摄像头 SELinux 策略",
             format!(
                 "SELinux is enforcing, and whether {module} is loaded could not be \
                  checked without root"
             ),
-            "Run `sudo gaze doctor` to read the loaded module list.",
+            "请运行 `sudo gaze doctor` 读取已加载模块列表。",
         ),
         ModuleState::Unverifiable(why) => report.warning(
-            "GDM camera SELinux policy",
-            format!("SELinux is enforcing, but the loaded module list could not be read: {why}"),
+            "GDM 摄像头 SELinux 策略",
+            format!("SELinux 处于 enforcing 模式，但无法读取已加载模块列表：{why}"),
             format!(
-                "Run `semodule -l | grep {module}`; if it prints nothing, {}",
+                "请运行 `semodule -l | grep {module}`；若无输出，则 {}",
                 gdm_selinux_fix()
             ),
         ),
@@ -253,7 +253,7 @@ mod tests {
             let check = report
                 .checks
                 .into_iter()
-                .find(|check| check.name == "GDM camera SELinux policy")
+                .find(|check| check.name == "GDM 摄像头 SELinux 策略")
                 .expect("the SELinux check always reports once it runs");
             (check.level, check.message, check.fix.unwrap_or_default())
         };

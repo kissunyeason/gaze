@@ -14,15 +14,18 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
         Path::new(gaze_security::keyring::KWALLET_STORE_DIR),
     ]);
     if let Some(warning) = gaze_security::storage::encryption_warning(storage) {
-        report.warning("State storage", warning, "Protect the filesystem holding /var/lib/gaze with full-disk encryption. Root on an unlocked machine can still recover TPM-sealed secrets.");
+        report.warning("状态存储", warning, "请对保存 /var/lib/gaze 的文件系统启用全盘加密。在已解锁的机器上，root 仍可恢复 TPM 封装的数据。");
     } else {
-        report.pass("State storage", "dm-crypt protects every visible backing-device path; TPM secrets remain recoverable by root after unlock");
+        report.pass(
+            "状态存储",
+            "dm-crypt 已保护所有可见的底层设备路径；解锁后 root 仍可恢复 TPM 中的机密",
+        );
     }
     if !config.storage.encrypt_templates {
         report.warning(
             "TPM",
-            "template encryption is off, so face templates sit on disk unencrypted and no TPM is required",
-            format!("Turn it on: set `encrypt_templates = true` under [storage] in {CONFIG_PATH}, then restart gazed."),
+            "模板加密已关闭，人脸模板以明文存放在磁盘上，不需要 TPM",
+            format!("开启方法：在 {CONFIG_PATH} 的 [storage] 下设置 `encrypt_templates = true`，然后重启 gazed。"),
         );
         return;
     }
@@ -36,32 +39,29 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
     if present.is_empty() {
         report.error(
             "TPM",
-            "template encryption is enabled but no TPM device is present",
-            "Enable TPM 2.0 in firmware or set storage.encrypt_templates = false, then restart gazed.",
+            "已启用模板加密，但未检测到 TPM 设备",
+            "请在固件中启用 TPM 2.0，或设置 storage.encrypt_templates = false，然后重启 gazed。",
         );
         return;
     }
 
     let Some(credentials) = daemon_credentials() else {
-        report.pass("TPM", "a TPM device is present for encrypted templates");
+        report.pass("TPM", "已检测到用于加密模板的 TPM 设备");
         return;
     };
 
     let mut blocked = Vec::new();
     for path in &present {
         let Ok(meta) = fs::metadata(path) else {
-            report.pass("TPM", "a TPM device is present for encrypted templates");
+            report.pass("TPM", "已检测到用于加密模板的 TPM 设备");
             return;
         };
         if node_openable(meta.uid(), meta.gid(), meta.mode(), &credentials) {
-            report.pass(
-                "TPM",
-                format!("a TPM device is present and gazed can open {path}"),
-            );
+            report.pass("TPM", format!("TPM 设备存在，且 gazed 可以打开 {path}"));
             return;
         }
         blocked.push(format!(
-            "{path} is {}:{} {:04o}",
+            "{path} 为 {}:{} {:04o}",
             user_name(meta.uid()),
             group_name(meta.gid()),
             meta.mode() & 0o777
@@ -71,7 +71,7 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
     report.error(
         "TPM",
         format!(
-            "template encryption is enabled but the gazed unit cannot open the TPM device ({})",
+            "已启用模板加密，但 gazed 服务无法打开 TPM 设备（{}）",
             blocked.join(", ")
         ),
         "Run `sudo systemctl edit gazed` and add `SupplementaryGroups=tss` (or \
@@ -263,8 +263,8 @@ pub(super) fn check_keyring(report: &mut Report, username: &str, config: Option<
     };
     if !config.storage.unlock_gnome_keyring {
         report.off(
-            "Keyring",
-            "GNOME Keyring unlock after a GDM or greetd face login is off",
+            "密钥环",
+            "GDM 或 greetd 人脸登录后的 GNOME 密钥环解锁已关闭",
             format!(
                 "Turn it on: set `unlock_gnome_keyring = true` under [storage] in {CONFIG_PATH} \
                  (it also needs `encrypt_templates = true` and [liveness] `enabled = true`), \
@@ -276,8 +276,8 @@ pub(super) fn check_keyring(report: &mut Report, username: &str, config: Option<
 
     if let Err(err) = config.storage.validate_keyring(&config.liveness) {
         report.error(
-            "Keyring",
-            format!("GNOME Keyring unlock is enabled but unusable: {err}"),
+            "密钥环",
+            format!("已启用 GNOME 密钥环解锁，但当前不可用：{err}"),
             format!(
                 "Set `encrypt_templates = true` under [storage] and `enabled = true` under \
                  [liveness] in {CONFIG_PATH}, or turn off `unlock_gnome_keyring`, then restart gazed."
@@ -300,7 +300,7 @@ pub(super) fn check_keyring(report: &mut Report, username: &str, config: Option<
             .is_some_and(|contents| !greetd_stack_passes_the_token(contents))
     {
         report.error(
-            "Keyring",
+            "密钥环",
             format!("{GREETD_PAM_FILE} does not hand the keyring the authentication token"),
             "Add `use_authtok` to the existing `auth optional pam_gnome_keyring.so` line, or on \
              oo7 systems keep `auth optional pam_oo7.so`, and keep the matching \
@@ -316,7 +316,7 @@ pub(super) fn check_keyring(report: &mut Report, username: &str, config: Option<
     match &gdm_face_stack {
         Some(contents) if !gdm_face_stack_passes_the_token(contents) => {
             report.error(
-                "Keyring",
+                "密钥环",
                 format!(
                     "/etc/pam.d/{GDM_FACE_PAM_SERVICE} does not have the packaged keyring \
                      hand-off and session hook"
@@ -338,7 +338,7 @@ pub(super) fn check_keyring(report: &mut Report, username: &str, config: Option<
         }
         None if greetd_stack.is_none() => {
             report.error(
-                "Keyring",
+                "密钥环",
                 format!(
                     "GNOME Keyring unlock is enabled but neither /etc/pam.d/{GDM_FACE_PAM_SERVICE} \
                      nor {GREETD_PAM_FILE} exists"
@@ -371,17 +371,16 @@ pub(super) fn check_greeter_keyring_selinux(report: &mut Report, config: Option<
 }
 
 pub(super) fn report_greeter_keyring_policy(report: &mut Report, policy: ModuleState) {
-    const NAME: &str = "Keyring SELinux policy";
+    const NAME: &str = "密钥环 SELinux 策略";
     let module = selinux::GREETER_KEYRING_MODULE;
     let fix = format!(
-        "Run `sudo semodule -i {}`, then retry the face login.",
+        "请运行 `sudo semodule -i {}`，然后重试人脸登录。",
         selinux::policy_path(module)
     );
     match policy {
-        ModuleState::Loaded => report.pass(
-            NAME,
-            format!("{module} is loaded, so the login screen can read the keyring record"),
-        ),
+        ModuleState::Loaded => {
+            report.pass(NAME, format!("已加载 {module}，登录界面可以读取密钥环记录"))
+        }
         ModuleState::NotLoaded => report.error(
             NAME,
             format!(
@@ -396,11 +395,11 @@ pub(super) fn report_greeter_keyring_policy(report: &mut Report, policy: ModuleS
                 "SELinux is enforcing, and whether {module} is loaded could not be checked \
                  without root"
             ),
-            "Run `sudo gaze doctor` to read the loaded module list.",
+            "请运行 `sudo gaze doctor` 读取已加载模块列表。",
         ),
         ModuleState::Unverifiable(why) => report.warning(
             NAME,
-            format!("SELinux is enforcing, but the loaded module list could not be read: {why}"),
+            format!("SELinux 处于 enforcing 模式，但无法读取已加载模块列表：{why}"),
             format!("Run `semodule -l | grep {module}`; if it prints nothing, {fix}"),
         ),
     }
@@ -409,21 +408,21 @@ pub(super) fn report_greeter_keyring_policy(report: &mut Report, policy: ModuleS
 pub(super) fn report_keyring_record(report: &mut Report, username: &str, state: Option<bool>) {
     match state {
         Some(true) => report.pass(
-            "Keyring",
-            format!("a TPM-protected keyring credential is enrolled for {username}"),
+            "密钥环",
+            format!("已为 {username} 录入受 TPM 保护的密钥环凭据"),
         ),
         Some(false) => report.warning(
-            "Keyring",
-            format!("GNOME Keyring unlock is enabled but {username} has no enrolled credential"),
-            format!("Run `sudo gaze keyring --user {username}`."),
+            "密钥环",
+            format!("已启用 GNOME 密钥环解锁，但 {username} 尚未录入凭据"),
+            format!("请运行 `sudo gaze keyring --user {username}`。"),
         ),
         None => report.warning(
-            "Keyring",
+            "密钥环",
             format!(
                 "the {GDM_FACE_PAM_SERVICE} stack passes the token, but whether {username} has \
                  an enrolled credential could not be checked without root"
             ),
-            "Run `sudo gaze doctor` to check the credential record.",
+            "请运行 `sudo gaze doctor` 检查凭据记录。",
         ),
     }
 }
@@ -477,13 +476,16 @@ pub(super) fn check_kwallet(report: &mut Report, username: &str, config: Option<
         {
             return;
         }
-        report.off("KWallet", "KWallet unlock after a KDE face login is off",
-            "Enable KWallet unlock in `gaze config`, then run `gaze keyring --kwallet` and `sudo gaze-kde-pam enable-login`.");
+        report.off("KWallet", "KDE 人脸登录后的 KWallet 解锁已关闭",
+            "请在 `gaze config` 中启用 KWallet 解锁，然后运行 `gaze keyring --kwallet` 与 `sudo gaze-kde-pam enable-login`。");
         return;
     }
     if let Err(err) = config.storage.validate_keyring(&config.liveness) {
-        report.error("KWallet", format!("KWallet unlock is enabled but unusable: {err}"),
-            "Enable TPM template encryption and liveness, or disable KWallet unlock in `gaze config`.");
+        report.error(
+            "KWallet",
+            format!("已启用 KWallet 解锁，但当前不可用：{err}"),
+            "请启用 TPM 模板加密与活体检测，或在 `gaze config` 中关闭 KWallet 解锁。",
+        );
         return;
     }
     if !pam_search_dirs()
@@ -492,8 +494,8 @@ pub(super) fn check_kwallet(report: &mut Report, username: &str, config: Option<
     {
         report.warning(
             "KWallet",
-            "pam_kwallet5.so was not found",
-            "Install your distribution's KWallet PAM package (kwallet-pam or libpam-kwallet5).",
+            "未找到 pam_kwallet5.so",
+            "请安装本发行版的 KWallet PAM 软件包（kwallet-pam 或 libpam-kwallet5）。",
         );
     }
     let mut found = false;
@@ -503,32 +505,32 @@ pub(super) fn check_kwallet(report: &mut Report, username: &str, config: Option<
         };
         found = true;
         if !kde_login_stack_passes_the_token(&contents) {
-            report.warning("KWallet", format!("{service} lacks the managed KWallet handoff/session hook"),
-                "Run `sudo gaze-kde-pam enable-login`. Custom PAM entries must use sequential mode and pass the token to pam_kwallet5 before ending authentication.");
+            report.warning("KWallet", format!("{service} 缺少托管的 KWallet 交接与会话钩子"),
+                "请运行 `sudo gaze-kde-pam enable-login`。自定义 PAM 条目必须使用顺序模式，并在结束认证前把令牌传给 pam_kwallet5。");
         }
     }
     if !found {
         report.error(
             "KWallet",
-            "No supported KDE login PAM service was found",
-            "Install SDDM or Plasma Login Manager and run `sudo gaze-kde-pam enable-login`.",
+            "未找到受支持的 KDE 登录 PAM 服务",
+            "请安装 SDDM 或 Plasma Login Manager，然后运行 `sudo gaze-kde-pam enable-login`。",
         );
         return;
     }
     match keyring_record_state(username, gaze_security::keyring::Backend::KWallet) {
         Some(true) => report.pass(
             "KWallet",
-            format!("a TPM-protected KWallet credential is enrolled for {username}"),
+            format!("已为 {username} 录入受 TPM 保护的 KWallet 凭据"),
         ),
         Some(false) => report.warning(
             "KWallet",
-            format!("{username} has no enrolled KWallet credential"),
-            format!("Run `sudo gaze keyring --kwallet --user {username}`."),
+            format!("{username} 尚未录入 KWallet 凭据"),
+            format!("请运行 `sudo gaze keyring --kwallet --user {username}`。"),
         ),
         None => report.warning(
             "KWallet",
-            "KWallet enrollment could not be checked without root",
-            "Run `sudo gaze doctor` to check the credential record.",
+            "非 root 身份无法检查 KWallet 录入状态",
+            "请运行 `sudo gaze doctor` 检查凭据记录。",
         ),
     }
 }
@@ -545,7 +547,7 @@ mod tests {
             let check = report
                 .checks
                 .into_iter()
-                .find(|check| check.name == "Keyring SELinux policy")
+                .find(|check| check.name == "密钥环 SELinux 策略")
                 .expect("the keyring SELinux check always reports once it runs");
             (check.level, check.message, check.fix.unwrap_or_default())
         };
@@ -583,7 +585,7 @@ mod tests {
             let check = report
                 .checks
                 .into_iter()
-                .find(|check| check.name == "Keyring")
+                .find(|check| check.name == "密钥环")
                 .expect("the keyring record always reports");
             (check.level, check.message, check.fix.unwrap_or_default())
         };

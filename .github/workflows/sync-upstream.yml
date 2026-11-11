@@ -1,0 +1,179 @@
+# SPDX-FileCopyrightText: 2026 Gaze CN fork
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Keeps the fork in step with GunduLabs/gaze:
+#   1. merge upstream/main,
+#   2. re-apply the zh-CN string table on top of the merge,
+#   3. tag a new v<version>-cn.<n> release when anything actually changed,
+#   4. hand the tag to release-cn.yml, which builds and publishes it.
+#
+# The tag is created with GITHUB_TOKEN, which does not trigger `on: push` in
+# other workflows, so the release is invoked as a reusable workflow instead.
+
+name: Sync upstream
+
+on:
+  schedule:
+    # 20:00 UTC = 04:00 Asia/Shanghai, before the workday starts.
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    name: Merge upstream and tag
+    # Never run inside the upstream repository itself.
+    if: github.repository != 'GunduLabs/gaze'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.decide.outputs.changed }}
+      tag: ${{ steps.decide.outputs.tag }}
+      notes: ${{ steps.decide.outputs.notes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "gaze-cn-bot"
+          git config user.email "gaze-cn-bot@users.noreply.github.com"
+          git remote add upstream https://github.com/GunduLabs/gaze.git
+          git fetch --no-tags upstream main
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          set -euo pipefail
+          if git merge --no-edit upstream/main; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > conflicts.txt || true
+            git merge --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "conflicts<<__EOF__"
+              cat conflicts.txt
+              echo "__EOF__"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Re-apply the zh-CN table
+        if: steps.merge.outputs.conflict == 'false'
+        run: |
+          set -euo pipefail
+          python3 scripts/localize-zh.py
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore(i18n): 对上游新改动重新应用简体中文词表"
+          fi
+
+      - name: Decide whether to release
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.merge.outputs.conflict }}" = "true" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git push origin HEAD:main
+
+          # Anything new relative to the last release tag?
+          last_tag="$(git tag --list 'v*-cn.*' --sort=-v:refname | head -n1)"
+          if [ -n "$last_tag" ] && [ "$(git rev-list --count "$last_tag"..HEAD)" = "0" ]; then
+            echo "没有新提交，跳过发布。"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          tag="v${version}-cn.${{ github.run_number }}"
+          while git rev-parse -q --verify "refs/tags/$tag" >/dev/null; do
+            tag="v${version}-cn.${RANDOM}"
+          done
+
+          git tag -a "$tag" -m "Gaze 中文版 $tag"
+          git push origin "$tag"
+
+          {
+            echo "基于上游 \`${version}\` 构建的简体中文版本。"
+            echo
+            echo "本次合并的上游提交："
+            echo
+            if [ -n "$last_tag" ]; then
+              git log --no-merges --pretty='- %s (%h)' -n 25 "$last_tag"..HEAD -- . ':!localization' | head -n 25
+            else
+              git log --no-merges --pretty='- %s (%h)' -n 10
+            fi
+            echo
+            echo "上游仓库：https://github.com/GunduLabs/gaze"
+          } > notes.md
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<__EOF__"
+            cat notes.md
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report a merge conflict
+        if: steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          set -euo pipefail
+          cat > body.md <<EOF
+          自动合并 \`GunduLabs/gaze\` 的 \`main\` 时发生冲突，本次同步已跳过，仓库保持在最后一次成功同步的状态。
+
+          请在本机手工合并：
+
+          \`\`\`bash
+          git fetch upstream
+          git merge upstream/main
+          # 解决冲突后重新套用词表
+          python3 scripts/localize-zh.py
+          git commit
+          git push
+          \`\`\`
+
+          冲突文件：
+
+          \`\`\`
+          ${CONFLICTS}
+          \`\`\`
+
+          运行记录：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          existing="$(gh issue list --label upstream-conflict --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+          else
+            gh label create upstream-conflict --description "上游自动合并冲突" --color B60205 || true
+            gh issue create --title "上游同步冲突，需要手工合并" --body-file body.md --label upstream-conflict
+          fi
+
+  release:
+    name: Build and publish
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-cn.yml
+    with:
+      tag: ${{ needs.sync.outputs.tag }}
+      notes: ${{ needs.sync.outputs.notes }}

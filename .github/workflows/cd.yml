@@ -29,6 +29,8 @@ env:
 jobs:
   build-native:
     name: Build ${{ matrix.name }}
+    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     env:
@@ -336,6 +338,8 @@ jobs:
 
   package-native:
     name: Package ${{ matrix.name }}
+    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
     needs: build-native
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -414,6 +418,8 @@ jobs:
 
   build-flatpak:
     name: Build flatpak (${{ matrix.arch }})
+    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
     runs-on: ${{ matrix.runner }}
     env:
       DEPLOY_REF_NAME: ${{ inputs.tag || github.ref_name }}
@@ -477,6 +483,8 @@ jobs:
 
   build-srpm:
     name: Build source RPM for Copr
+    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
     runs-on: ubuntu-latest
     container: fedora:45
     env:
@@ -541,6 +549,8 @@ jobs:
 
   dispatch-packages:
     name: Dispatch packages to self-hosted repo
+    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
     runs-on: ubuntu-latest
     permissions: {}
     needs: [package-native, build-flatpak, build-srpm]
@@ -556,6 +566,8 @@ jobs:
 
   release-github:
     name: Upload packages to GitHub Release
+    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
     runs-on: ubuntu-latest
     permissions:
       contents: write

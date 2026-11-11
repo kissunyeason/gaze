@@ -39,7 +39,7 @@ fn spectrum_badge(label: &str, enrolled: bool, configured: bool) -> String {
 
 fn write_no_faces(term: &Term, user: &str) -> anyhow::Result<()> {
     term.write_line(&format!(
-        "{} No faces found for {}",
+        "{} 未找到用户 {} 的人脸",
         style("i").cyan().bold(),
         style(user).bold()
     ))?;
@@ -50,9 +50,7 @@ async fn print_faces_json(proxy: &GazeProxy<'_>, user: &str) -> anyhow::Result<(
     let faces = match proxy.list_faces(user).await {
         Ok(faces) => faces,
         Err(err) if dbus_is_file_not_found(&err) => Vec::new(),
-        Err(err) => {
-            exit_with_error(&describe_dbus_error(proxy, "Failed to fetch faces", &err).await)
-        }
+        Err(err) => exit_with_error(&describe_dbus_error(proxy, "获取人脸列表失败", &err).await),
     };
     let entries: Vec<String> = faces
         .iter()
@@ -92,8 +90,8 @@ pub async fn handle_list_faces(
         });
     let (rgb_configured, ir_configured) = cameras.unwrap_or((true, true));
     let result = run_busy(
-        "Face database",
-        format!("Fetching faces for {user}..."),
+        "人脸数据库",
+        format!("正在获取 {user} 的人脸…"),
         Tone::Info,
         true,
         proxy.list_faces(user),
@@ -131,7 +129,7 @@ pub async fn handle_list_faces(
             if dbus_is_file_not_found(&e) {
                 write_no_faces(&term, user)?;
             } else {
-                exit_with_error(&describe_dbus_error(proxy, "Failed to fetch faces", &e).await);
+                exit_with_error(&describe_dbus_error(proxy, "获取人脸列表失败", &e).await);
             }
         }
     }
@@ -140,7 +138,7 @@ pub async fn handle_list_faces(
 
 fn exit_face_not_found(face: &str, user: &str) -> ! {
     exit_with_error(&format!(
-        "Face '{face}' not found for '{user}'. Run `gaze list-faces` to see the enrolled faces."
+        "用户“{user}”下没有名为“{face}”的人脸。可运行 `gaze list-faces` 查看已录入的人脸。"
     ))
 }
 
@@ -151,8 +149,8 @@ pub async fn handle_remove_face(
 ) -> anyhow::Result<()> {
     let term = Term::stdout();
     let result = run_busy(
-        "Remove face",
-        format!("Deleting face {face}..."),
+        "删除人脸",
+        format!("正在删除人脸 {face}…"),
         Tone::Warn,
         false,
         proxy.delete_face(user, face),
@@ -162,7 +160,7 @@ pub async fn handle_remove_face(
     match result {
         Ok(true) => {
             term.write_line(&format!(
-                "{} Face '{}' removed for '{}'",
+                "{} 已删除用户“{}”的人脸“{}”",
                 style("✓").green().bold(),
                 face,
                 user
@@ -170,9 +168,7 @@ pub async fn handle_remove_face(
         }
         Ok(false) => exit_face_not_found(face, user),
         Err(err) if dbus_is_file_not_found(&err) => exit_face_not_found(face, user),
-        Err(err) => {
-            exit_with_error(&describe_dbus_error(proxy, "Failed to remove face", &err).await)
-        }
+        Err(err) => exit_with_error(&describe_dbus_error(proxy, "删除人脸失败", &err).await),
     }
     Ok(())
 }
@@ -185,8 +181,8 @@ pub async fn handle_rename_face(
 ) -> anyhow::Result<()> {
     let term = Term::stdout();
     let result = run_busy(
-        "Rename face",
-        format!("Renaming face {from} -> {to}..."),
+        "重命名人脸",
+        format!("正在将人脸 {from} 重命名为 {to}…"),
         Tone::Info,
         false,
         proxy.rename_face(user, from, to),
@@ -196,7 +192,7 @@ pub async fn handle_rename_face(
     match result {
         Ok(true) => {
             term.write_line(&format!(
-                "{} Face '{}' renamed to '{}' for '{}'",
+                "{} 已将用户“{}”的人脸“{}”重命名为“{}”",
                 style("✓").green().bold(),
                 from,
                 to,
@@ -205,9 +201,7 @@ pub async fn handle_rename_face(
         }
         Ok(false) => exit_face_not_found(from, user),
         Err(err) if dbus_is_file_not_found(&err) => exit_face_not_found(from, user),
-        Err(err) => {
-            exit_with_error(&describe_dbus_error(proxy, "Failed to rename face", &err).await)
-        }
+        Err(err) => exit_with_error(&describe_dbus_error(proxy, "重命名人脸失败", &err).await),
     }
     Ok(())
 }
@@ -217,29 +211,23 @@ pub async fn handle_duress(proxy: &GazeProxy<'_>, user: &str, clear: bool) -> an
     if clear {
         let cleared = match proxy.clear_duress(user).await {
             Ok(cleared) => cleared,
-            Err(err) => exit_with_error(
-                &describe_dbus_error(proxy, "Failed to clear the duress lockout", &err).await,
-            ),
+            Err(err) => {
+                exit_with_error(&describe_dbus_error(proxy, "解除胁迫锁定失败", &err).await)
+            }
         };
         if cleared {
-            term.write_line(&format!(
-                "Face authentication re-enabled for {}.",
-                style(user).bold()
-            ))?;
+            term.write_line(&format!("已为 {} 重新启用人脸认证。", style(user).bold()))?;
         } else {
-            term.write_line(&format!(
-                "Face authentication was not locked for {}.",
-                style(user).bold()
-            ))?;
+            term.write_line(&format!("{} 的人脸认证并未被锁定。", style(user).bold()))?;
         }
         return Ok(());
     }
 
     let locked = match proxy.duress_locked(user).await {
         Ok(locked) => locked,
-        Err(err) => exit_with_error(
-            &describe_dbus_error(proxy, "Failed to read the duress lockout", &err).await,
-        ),
+        Err(err) => {
+            exit_with_error(&describe_dbus_error(proxy, "读取胁迫锁定状态失败", &err).await)
+        }
     };
     if locked {
         term.write_line(&format!(
@@ -250,9 +238,9 @@ pub async fn handle_duress(proxy: &GazeProxy<'_>, user: &str, clear: bool) -> an
         ))?;
     } else {
         term.write_line(&format!(
-            "Face authentication for {} is {}.",
+            "{} 的人脸认证状态为 {}。",
             style(user).bold(),
-            style("not locked").green()
+            style("未锁定").green()
         ))?;
     }
     Ok(())
@@ -269,18 +257,18 @@ pub async fn handle_clear_user(proxy: &GazeProxy<'_>, user: &str, yes: bool) -> 
         }
         let proceed = Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt(format!(
-                "Delete every enrolled face and stored keyring or KWallet credential for '{user}'?"
+                "删除“{user}”的全部已录入人脸，以及保存的密钥环或 KWallet 凭据？"
             ))
             .default(false)
             .interact()?;
         if !proceed {
-            term.write_line("Cancelled; nothing was deleted.")?;
+            term.write_line("已取消，未删除任何数据。")?;
             return Ok(());
         }
     }
     let result = run_busy(
-        "Clear user",
-        format!("Deleting all data for {user}..."),
+        "清除用户",
+        format!("正在删除 {user} 的全部数据…"),
         Tone::Warn,
         false,
         proxy.delete_faces(user),
@@ -303,14 +291,12 @@ pub async fn handle_clear_user(proxy: &GazeProxy<'_>, user: &str, yes: bool) -> 
                     )
                 })?;
             term.write_line(&format!(
-                "{} All data cleared for '{}'",
+                "{} 已清除“{}”的全部数据",
                 style("✓").green().bold(),
                 user
             ))?;
         }
-        Err(err) => {
-            exit_with_error(&describe_dbus_error(proxy, "Failed to clear user", &err).await)
-        }
+        Err(err) => exit_with_error(&describe_dbus_error(proxy, "清除用户失败", &err).await),
     }
     Ok(())
 }

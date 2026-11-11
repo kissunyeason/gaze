@@ -176,7 +176,7 @@ fn drain_config_apply_queue(queue: &ApplyQueue) {
                 let write = queue.borrow().write.clone();
                 if let Err(e) = write(cfg).await {
                     let report_error = queue.borrow().report_error.clone();
-                    report_error(format!("Failed to apply config: {e}"));
+                    report_error(format!("应用配置失败：{e}"));
                 }
             }
             queue.borrow_mut().in_flight = false;
@@ -287,9 +287,7 @@ fn camera_subtitle(options: &[(String, String)], configured: &str) -> Option<Str
     if is_listed_source(options, configured) {
         None
     } else {
-        Some(format!(
-            "Configured as {configured}, which this list cannot show"
-        ))
+        Some(format!("当前配置为 {configured}，本列表无法显示"))
     }
 }
 
@@ -311,10 +309,10 @@ fn populate_config_rows(cfg: &Config, rows: &ConfigRows, choices: CameraChoices<
         .set_selected(cfg.inference.device_index());
     if cfg.inference.is_representable() {
         rows.inference_execution_provider
-            .set_subtitle("CPU, automatic NPU, Intel OpenVINO, or AMD Ryzen AI");
+            .set_subtitle("CPU、自动选择 NPU、Intel OpenVINO 或 AMD Ryzen AI");
     } else {
         rows.inference_execution_provider.set_subtitle(&format!(
-            "Configured as {}/{}, which this build cannot show",
+            "当前配置为 {}/{}，当前版本无法显示",
             cfg.inference.execution_provider, cfg.inference.device
         ));
     }
@@ -342,7 +340,7 @@ fn populate_config_rows(cfg: &Config, rows: &ConfigRows, choices: CameraChoices<
     rows.camera.set_selected(cam_idx as u32);
     if matches!(cfg.cameras.rgb, CameraSources::Ordered(_)) {
         rows.camera.set_subtitle(&format!(
-            "Ordered fallback: {}. Selecting a camera replaces this list.",
+            "按序回退：{}。选择摄像头将替换此列表。",
             cfg.cameras.rgb
         ));
     } else {
@@ -420,7 +418,7 @@ pub fn show_config_dialog(
     let window = libadwaita::Window::builder()
         .transient_for(parent)
         .modal(true)
-        .title("Settings")
+        .title("设置")
         .default_width(600)
         .default_height(700)
         .build();
@@ -429,8 +427,8 @@ pub fn show_config_dialog(
     let header_bar = libadwaita::HeaderBar::new();
     toolbar_view.add_top_bar(&header_bar);
 
-    let banner = libadwaita::Banner::new("Settings are locked");
-    banner.set_button_label(Some("Unlock…"));
+    let banner = libadwaita::Banner::new("设置已锁定");
+    banner.set_button_label(Some("解锁…"));
     toolbar_view.add_top_bar(&banner);
 
     let scrolled = gtk4::ScrolledWindow::builder()
@@ -446,24 +444,24 @@ pub fn show_config_dialog(
     banner.set_revealed(true);
 
     let security_group = libadwaita::PreferencesGroup::new();
-    security_group.set_title("Security");
+    security_group.set_title("安全");
     page.add(&security_group);
 
     let level_row = libadwaita::ComboRow::new();
-    level_row.set_title("Security level");
-    level_row.set_subtitle("Adjust the balance between speed and security");
+    level_row.set_title("安全等级");
+    level_row.set_subtitle("调整速度与安全性之间的平衡");
     let level_model = gtk4::StringList::new(&SECURITY_LEVEL_LABELS);
     level_row.set_model(Some(&level_model));
     security_group.add(&level_row);
 
     let detector_row = libadwaita::ComboRow::new();
-    detector_row.set_title("Detector level");
+    detector_row.set_title("检测器等级");
     let detector_model = gtk4::StringList::new(&MODEL_QUALITY_LABELS);
     detector_row.set_model(Some(&detector_model));
     security_group.add(&detector_row);
 
     let recognizer_row = libadwaita::ComboRow::new();
-    recognizer_row.set_title("Recognizer level");
+    recognizer_row.set_title("识别器等级");
     let recognizer_model = gtk4::StringList::new(&MODEL_QUALITY_LABELS);
     recognizer_row.set_model(Some(&recognizer_model));
     security_group.add(&recognizer_row);
@@ -480,41 +478,35 @@ pub fn show_config_dialog(
         row
     };
 
-    let rgb_threshold_row = make_threshold_row(
-        "RGB recognizer threshold",
-        "Minimum RGB similarity for a match",
-    );
+    let rgb_threshold_row = make_threshold_row("RGB 识别阈值", "匹配所需的 RGB 最小相似度");
     security_group.add(&rgb_threshold_row);
 
-    let ir_threshold_row = make_threshold_row(
-        "IR recognizer threshold",
-        "Minimum IR similarity for a match",
-    );
+    let ir_threshold_row = make_threshold_row("红外识别阈值", "匹配所需的红外最小相似度");
     security_group.add(&ir_threshold_row);
 
     let hardware_group = libadwaita::PreferencesGroup::new();
-    hardware_group.set_title("Hardware");
+    hardware_group.set_title("硬件");
     page.add(&hardware_group);
 
     let inference_execution_provider_row = libadwaita::ComboRow::new();
-    inference_execution_provider_row.set_title("Inference execution provider");
+    inference_execution_provider_row.set_title("推理执行后端");
     inference_execution_provider_row
-        .set_subtitle("CPU, automatic NPU, Intel OpenVINO, or AMD Ryzen AI");
+        .set_subtitle("CPU、自动选择 NPU、Intel OpenVINO 或 AMD Ryzen AI");
     let inference_execution_provider_model =
         gtk4::StringList::new(&INFERENCE_EXECUTION_PROVIDER_LABELS);
     inference_execution_provider_row.set_model(Some(&inference_execution_provider_model));
     hardware_group.add(&inference_execution_provider_row);
 
     let inference_device_row = libadwaita::ComboRow::new();
-    inference_device_row.set_title("OpenVINO inference device");
-    inference_device_row.set_subtitle("The Intel device used for all ONNX models");
+    inference_device_row.set_title("OpenVINO 推理设备");
+    inference_device_row.set_subtitle("所有 ONNX 模型使用的 Intel 设备");
     let inference_device_model = gtk4::StringList::new(&INFERENCE_DEVICE_LABELS);
     inference_device_row.set_model(Some(&inference_device_model));
     hardware_group.add(&inference_device_row);
 
     let cameras = gaze_vision::camera::rgb_choices().unwrap_or_else(|_| {
         vec![
-            ("Primary camera".to_string(), DEFAULT_RGB_CAMERA.to_string()),
+            ("主摄像头".to_string(), DEFAULT_RGB_CAMERA.to_string()),
             (
                 gaze_vision::camera::RGB_NONE_DISPLAY_NAME.to_string(),
                 String::new(),
@@ -524,7 +516,7 @@ pub fn show_config_dialog(
     let cam_names = cameras.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>();
 
     let camera_row = libadwaita::ComboRow::new();
-    camera_row.set_title("RGB camera source");
+    camera_row.set_title("RGB 摄像头来源");
     let cam_model =
         gtk4::StringList::new(&cam_names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
     camera_row.set_model(Some(&cam_model));
@@ -537,15 +529,14 @@ pub fn show_config_dialog(
         .collect::<Vec<_>>();
 
     let ir_row = libadwaita::ComboRow::new();
-    ir_row.set_title("IR camera source");
+    ir_row.set_title("红外摄像头来源");
     let ir_model = gtk4::StringList::new(&ir_names.iter().map(|s| s.as_str()).collect::<Vec<_>>());
     ir_row.set_model(Some(&ir_model));
     hardware_group.add(&ir_row);
 
     let ir_frame_size_row = libadwaita::ExpanderRow::new();
-    ir_frame_size_row.set_title("IR frame size override");
-    ir_frame_size_row
-        .set_subtitle("Force one resolution if the IR feed is green or corrupted on auto");
+    ir_frame_size_row.set_title("覆盖红外画面尺寸");
+    ir_frame_size_row.set_subtitle("自动模式下红外画面发绿或异常时，强制使用固定分辨率");
     ir_frame_size_row.set_show_enable_switch(true);
     ir_frame_size_row.set_enable_expansion(false);
     hardware_group.add(&ir_frame_size_row);
@@ -553,48 +544,45 @@ pub fn show_config_dialog(
     let ir_frame_width_row =
         libadwaita::SpinRow::with_range(1.0, MAX_IR_FRAME_DIMENSION as f64, 1.0);
     ir_frame_width_row.set_digits(0);
-    ir_frame_width_row.set_title("Width");
+    ir_frame_width_row.set_title("宽度");
     ir_frame_width_row.set_value(640.0);
     ir_frame_size_row.add_row(&ir_frame_width_row);
 
     let ir_frame_height_row =
         libadwaita::SpinRow::with_range(1.0, MAX_IR_FRAME_DIMENSION as f64, 1.0);
     ir_frame_height_row.set_digits(0);
-    ir_frame_height_row.set_title("Height");
+    ir_frame_height_row.set_title("高度");
     ir_frame_height_row.set_value(480.0);
     ir_frame_size_row.add_row(&ir_frame_height_row);
 
     let emitter_row = libadwaita::ActionRow::new();
-    emitter_row.set_title("Force IR emitter");
-    emitter_row
-        .set_subtitle("Override emitter control, only if the IR emitter stays off on its own");
+    emitter_row.set_title("强制开启红外补光");
+    emitter_row.set_subtitle("覆盖补光控制（仅在红外补光始终不亮时使用）");
     let emitter_switch = gtk4::Switch::new();
     emitter_switch.set_valign(gtk4::Align::Center);
     emitter_row.add_suffix(&emitter_switch);
     hardware_group.add(&emitter_row);
 
     let parallel_capture_row = libadwaita::ComboRow::new();
-    parallel_capture_row.set_title("Parallel RGB + IR capture");
-    parallel_capture_row.set_subtitle(
-        "Faster hybrid authentication, but some webcams cannot stream both sensors at once",
-    );
+    parallel_capture_row.set_title("RGB + 红外并行采集");
+    parallel_capture_row.set_subtitle("混合认证更快，但部分摄像头无法同时输出两路画面");
     let parallel_capture_model = gtk4::StringList::new(&PARALLEL_CAPTURE_LABELS);
     parallel_capture_row.set_model(Some(&parallel_capture_model));
     hardware_group.add(&parallel_capture_row);
 
     let dark_luma_threshold_row = libadwaita::SpinRow::with_range(0.0, 255.0, 1.0);
     dark_luma_threshold_row.set_digits(0);
-    dark_luma_threshold_row.set_title("Darkness cutoff");
-    dark_luma_threshold_row.set_subtitle("Reject frames below this mean brightness (0–255)");
+    dark_luma_threshold_row.set_title("亮度下限");
+    dark_luma_threshold_row.set_subtitle("丢弃平均亮度低于此值的画面（0–255）");
     hardware_group.add(&dark_luma_threshold_row);
 
     let enrollment_group = libadwaita::PreferencesGroup::new();
-    enrollment_group.set_title("Enrollment");
+    enrollment_group.set_title("录入");
     page.add(&enrollment_group);
 
     let templates_row = libadwaita::SpinRow::with_range(1.0, 50.0, 1.0);
-    templates_row.set_title("Maximum templates");
-    templates_row.set_subtitle("Number of capture sets stored per face");
+    templates_row.set_title("模板数量上限");
+    templates_row.set_subtitle("每张人脸保存的采集组数");
     enrollment_group.add(&templates_row);
 
     let min_face_size_ratio_row = libadwaita::SpinRow::with_range(
@@ -603,18 +591,17 @@ pub fn show_config_dialog(
         0.01,
     );
     min_face_size_ratio_row.set_digits(2);
-    min_face_size_ratio_row.set_title("Minimum face size ratio");
-    min_face_size_ratio_row
-        .set_subtitle("Smallest accepted face during enrollment; lower allows more distance");
+    min_face_size_ratio_row.set_title("最小人脸尺寸比例");
+    min_face_size_ratio_row.set_subtitle("录入时可接受的最小人脸；值越小允许的距离越远");
     enrollment_group.add(&min_face_size_ratio_row);
 
     let liveness_group = libadwaita::PreferencesGroup::new();
-    liveness_group.set_title("Liveness Anti-Spoofing");
+    liveness_group.set_title("活体防欺骗");
     page.add(&liveness_group);
 
     let liveness_enabled_row = libadwaita::ActionRow::new();
-    liveness_enabled_row.set_title("Enable liveness spoof prevention");
-    liveness_enabled_row.set_subtitle("Analyze face depth/reflectance to prevent photo spoofing");
+    liveness_enabled_row.set_title("启用活体防欺骗");
+    liveness_enabled_row.set_subtitle("分析人脸的深度与反射特征，防止照片欺骗");
     let liveness_enabled_switch = gtk4::Switch::new();
     liveness_enabled_switch.set_valign(gtk4::Align::Center);
     liveness_enabled_row.add_suffix(&liveness_enabled_switch);
@@ -626,61 +613,58 @@ pub fn show_config_dialog(
         0.01,
     );
     liveness_threshold_row.set_digits(3);
-    liveness_threshold_row.set_title("Liveness threshold");
-    liveness_threshold_row.set_subtitle("Minimum spoof prevention confidence");
+    liveness_threshold_row.set_title("活体检测阈值");
+    liveness_threshold_row.set_subtitle("防欺骗最低置信度");
     liveness_group.add(&liveness_threshold_row);
 
     let liveness_max_seconds_row =
         libadwaita::SpinRow::with_range(MIN_LIVENESS_MAX_SECONDS, MAX_LIVENESS_MAX_SECONDS, 0.1);
     liveness_max_seconds_row.set_digits(1);
-    liveness_max_seconds_row.set_title("Maximum liveness duration");
-    liveness_max_seconds_row.set_subtitle("Maximum seconds analyzed for liveness verification");
+    liveness_max_seconds_row.set_title("活体检测最长时长");
+    liveness_max_seconds_row.set_subtitle("活体验证分析的最长秒数");
     liveness_group.add(&liveness_max_seconds_row);
 
     let auth_group = libadwaita::PreferencesGroup::new();
-    auth_group.set_title("Authentication");
+    auth_group.set_title("认证");
     page.add(&auth_group);
 
     let abort_ssh_row = libadwaita::ActionRow::new();
-    abort_ssh_row.set_title("Abort if SSH");
-    abort_ssh_row.set_subtitle("Prevent authentication over SSH connections");
+    abort_ssh_row.set_title("SSH 连接时中止");
+    abort_ssh_row.set_subtitle("SSH 连接下禁止认证");
     let abort_ssh_switch = gtk4::Switch::new();
     abort_ssh_switch.set_valign(gtk4::Align::Center);
     abort_ssh_row.add_suffix(&abort_ssh_switch);
     auth_group.add(&abort_ssh_row);
 
     let abort_lid_row = libadwaita::ActionRow::new();
-    abort_lid_row.set_title("Abort if lid closed");
-    abort_lid_row.set_subtitle("Prevent authentication when the laptop lid is closed");
+    abort_lid_row.set_title("合上盖子时中止");
+    abort_lid_row.set_subtitle("合上笔记本盖子时禁止认证");
     let abort_lid_switch = gtk4::Switch::new();
     abort_lid_switch.set_valign(gtk4::Align::Center);
     abort_lid_row.add_suffix(&abort_lid_switch);
     auth_group.add(&abort_lid_row);
 
     let abort_first_resume_row = libadwaita::ActionRow::new();
-    abort_first_resume_row.set_title("Require a suspend first");
-    abort_first_resume_row
-        .set_subtitle("Prevent authentication until the system has suspended and resumed once");
+    abort_first_resume_row.set_title("要求先休眠一次");
+    abort_first_resume_row.set_subtitle("系统完成一次休眠唤醒前禁止认证");
     let abort_first_resume_switch = gtk4::Switch::new();
     abort_first_resume_switch.set_valign(gtk4::Align::Center);
     abort_first_resume_row.add_suffix(&abort_first_resume_switch);
     auth_group.add(&abort_first_resume_row);
 
     let require_confirm_lock_screen_row = libadwaita::ActionRow::new();
-    require_confirm_lock_screen_row.set_title("Require confirmation on lock screen");
-    require_confirm_lock_screen_row.set_subtitle(
-        "Require pressing Enter or clicking OK to authorize after face matches on the lock screen or login screen",
-    );
+    require_confirm_lock_screen_row.set_title("锁屏认证需要确认");
+    require_confirm_lock_screen_row
+        .set_subtitle("锁屏或登录界面在人脸匹配后，需按回车或点击“确定”才授权");
     let require_confirm_lock_screen_switch = gtk4::Switch::new();
     require_confirm_lock_screen_switch.set_valign(gtk4::Align::Center);
     require_confirm_lock_screen_row.add_suffix(&require_confirm_lock_screen_switch);
     auth_group.add(&require_confirm_lock_screen_row);
 
     let require_confirm_elevation_row = libadwaita::ActionRow::new();
-    require_confirm_elevation_row.set_title("Require confirmation for elevated authentication");
-    require_confirm_elevation_row.set_subtitle(
-        "Require pressing Enter or clicking OK to authorize after face matches for sudo, polkit, and similar prompts",
-    );
+    require_confirm_elevation_row.set_title("提权认证需要确认");
+    require_confirm_elevation_row
+        .set_subtitle("sudo、polkit 等提权提示在人脸匹配后，需按回车或点击“确定”才授权");
     let require_confirm_elevation_switch = gtk4::Switch::new();
     require_confirm_elevation_switch.set_valign(gtk4::Align::Center);
     require_confirm_elevation_row.add_suffix(&require_confirm_elevation_switch);
@@ -688,37 +672,37 @@ pub fn show_config_dialog(
 
     let resume_grace_row = libadwaita::SpinRow::with_range(0.0, 10000.0, 100.0);
     resume_grace_row.set_digits(0);
-    resume_grace_row.set_title("Resume grace period (ms)");
-    resume_grace_row.set_subtitle("Delay face authentication on wake from suspend");
+    resume_grace_row.set_title("唤醒宽限期（毫秒）");
+    resume_grace_row.set_subtitle("从休眠唤醒后延迟人脸认证");
     auth_group.add(&resume_grace_row);
 
     let start_delay_row = libadwaita::SpinRow::with_range(0.0, 10000.0, 500.0);
     start_delay_row.set_digits(0);
-    start_delay_row.set_title("Start delay (ms)");
-    start_delay_row.set_subtitle("Delay before face authentication starts");
+    start_delay_row.set_title("启动延迟（毫秒）");
+    start_delay_row.set_subtitle("人脸认证开始前的延迟");
     auth_group.add(&start_delay_row);
 
     let start_delay_scope_row = libadwaita::ComboRow::new();
-    start_delay_scope_row.set_title("Start delay applies to");
-    start_delay_scope_row.set_subtitle("Which prompts wait for the start delay");
+    start_delay_scope_row.set_title("启动延迟适用范围");
+    start_delay_scope_row.set_subtitle("哪些提示会等待启动延迟");
     let start_delay_scope_model = gtk4::StringList::new(&START_DELAY_SCOPE_LABELS);
     start_delay_scope_row.set_model(Some(&start_delay_scope_model));
     auth_group.add(&start_delay_scope_row);
 
     let hybrid_row = libadwaita::ComboRow::new();
-    hybrid_row.set_title("Hybrid combining policy");
-    hybrid_row.set_subtitle("Combining policy when both RGB and IR cameras are active");
+    hybrid_row.set_title("混合融合策略");
+    hybrid_row.set_subtitle("RGB 与红外摄像头同时工作时的融合策略");
     let hybrid_model = gtk4::StringList::new(&HYBRID_POLICY_LABELS);
     hybrid_row.set_model(Some(&hybrid_model));
     security_group.add(&hybrid_row);
 
     let storage_group = libadwaita::PreferencesGroup::new();
-    storage_group.set_title("Storage");
+    storage_group.set_title("存储");
     page.add(&storage_group);
 
     let encrypt_templates_row = libadwaita::ActionRow::new();
-    encrypt_templates_row.set_title("Encrypt face templates");
-    encrypt_templates_row.set_subtitle("Encrypt face templates at rest with a TPM-sealed key");
+    encrypt_templates_row.set_title("加密人脸模板");
+    encrypt_templates_row.set_subtitle("使用 TPM 封装的密钥加密磁盘上的人脸模板");
     let encrypt_templates_switch = gtk4::Switch::new();
     encrypt_templates_switch.set_valign(gtk4::Align::Center);
     encrypt_templates_row.add_suffix(&encrypt_templates_switch);
@@ -727,9 +711,9 @@ pub fn show_config_dialog(
     let unlock_gnome_keyring_row = libadwaita::ActionRow::new();
     // Stays hidden until the load below reports a daemon that can store the flag.
     unlock_gnome_keyring_row.set_visible(false);
-    unlock_gnome_keyring_row.set_title("Unlock GNOME Keyring");
+    unlock_gnome_keyring_row.set_title("解锁 GNOME 密钥环");
     unlock_gnome_keyring_row
-        .set_subtitle("Use an enrolled password after liveness-protected GDM or greetd face login");
+        .set_subtitle("在受活体保护的 GDM 或 greetd 人脸登录后，用已录入的密码解锁");
     let unlock_gnome_keyring_switch = gtk4::Switch::new();
     unlock_gnome_keyring_switch.set_valign(gtk4::Align::Center);
     unlock_gnome_keyring_row.add_suffix(&unlock_gnome_keyring_switch);
@@ -737,8 +721,10 @@ pub fn show_config_dialog(
 
     let unlock_kwallet_row = libadwaita::ActionRow::new();
     unlock_kwallet_row.set_visible(false);
-    unlock_kwallet_row.set_title("Unlock KWallet");
-    unlock_kwallet_row.set_subtitle("Use an enrolled password after liveness-protected KDE login; enroll with gaze keyring --kwallet");
+    unlock_kwallet_row.set_title("解锁 KWallet");
+    unlock_kwallet_row.set_subtitle(
+        "在受活体保护的 KDE 人脸登录后，用已录入的密码解锁；用 gaze keyring --kwallet 录入",
+    );
     let unlock_kwallet_switch = gtk4::Switch::new();
     unlock_kwallet_switch.set_valign(gtk4::Align::Center);
     unlock_kwallet_row.add_suffix(&unlock_kwallet_switch);
@@ -838,11 +824,11 @@ pub fn show_config_dialog(
             let loaded = config_loaded.get();
 
             if !authorized {
-                banner.set_title("Settings are locked");
-                banner.set_button_label(Some("Unlock…"));
+                banner.set_title("设置已锁定");
+                banner.set_button_label(Some("解锁…"));
             } else if !loaded {
-                banner.set_title("Could not read the current configuration from the Gaze daemon");
-                banner.set_button_label(Some("Try again"));
+                banner.set_title("无法从 Gaze 守护进程读取当前配置");
+                banner.set_button_label(Some("重试"));
             }
 
             banner.set_revealed(!authorized || !loaded);
@@ -1337,10 +1323,8 @@ pub fn show_config_dialog(
                         Err(e) => {
                             // The next read may use a connection this one just lost.
                             *proxy_cell.borrow_mut() = None;
-                            overlay.add_toast(libadwaita::Toast::new(&format!(
-                                "Failed to load configuration: {}",
-                                e
-                            )));
+                            overlay
+                                .add_toast(libadwaita::Toast::new(&format!("加载配置失败：{}", e)));
                         }
                     }
 
@@ -1386,9 +1370,9 @@ pub fn show_config_dialog(
                     is_authorized.set(result.is_ok());
                     update_locked_state();
                     if let Err(e) = result {
-                        eprintln!("gaze-gui: settings authorization failed: {e}");
+                        eprintln!("gaze-gui：设置授权失败：{e}");
                         overlay.add_toast(libadwaita::Toast::new(&format!(
-                            "Settings stay locked: {}",
+                            "设置保持锁定：{}",
                             gaze_core::dbus::dbus_error_message(&e)
                         )));
                     }
@@ -1428,8 +1412,8 @@ pub fn show_config_dialog(
                 let Ok(args) = change.args() else {
                     continue;
                 };
-                let config_changed = args.changed_properties().contains_key("Config")
-                    || args.invalidated_properties().contains(&"Config");
+                let config_changed = args.changed_properties().contains_key("配置")
+                    || args.invalidated_properties().contains(&"配置");
                 if config_changed && config_apply_idle(&apply_queue) {
                     load_config();
                 }
@@ -1505,7 +1489,7 @@ mod tests {
                             log.applied.push(cfg.auth.resume_grace_ms);
                         }
                         if fail {
-                            anyhow::bail!("daemon rejected the config");
+                            anyhow::bail!("守护进程拒绝了该配置");
                         }
                         Ok(())
                     }) as ConfigWriteFuture
@@ -1576,7 +1560,7 @@ mod tests {
             pump_until(|| !errors.borrow().is_empty(), Duration::from_secs(5)),
             "a failed write should be reported"
         );
-        assert!(errors.borrow()[0].starts_with("Failed to apply config"));
+        assert!(errors.borrow()[0].starts_with("应用配置失败"));
 
         schedule_config_apply(&queue, config_with_grace(1000));
         flush_config_apply(&queue);
@@ -1655,8 +1639,8 @@ mod tests {
     #[test]
     fn camera_subtitle_is_empty_for_listed_sources() {
         let options = vec![
-            ("Primary camera".to_string(), "primary".to_string()),
-            ("USB camera".to_string(), "/dev/video0".to_string()),
+            ("主摄像头".to_string(), "primary".to_string()),
+            ("USB 摄像头".to_string(), "/dev/video0".to_string()),
         ];
         assert_eq!(camera_subtitle(&options, "primary"), None);
         assert_eq!(camera_subtitle(&options, "/dev/video0"), None);

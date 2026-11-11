@@ -161,17 +161,17 @@ pub(super) fn check_privileged_files(report: &mut Report) {
     let writable = insecurely_owned(&files);
     if writable.is_empty() {
         report.pass(
-            "Service file permissions",
-            "the systemd unit, DBus policy, and polkit action are root-owned and not writable by group or others",
+            "服务文件权限",
+            "systemd 单元、DBus 策略与 polkit 动作均属于 root，且同组与其他用户不可写",
         );
     } else {
         report.error(
-            "Service file permissions",
+            "服务文件权限",
             format!(
-                "anyone in the owning group can make gazed run their code or grant themselves access: {}",
+                "所属组内任何人都能让 gazed 运行他们的代码或为自己授权：{}",
                 writable.join(", ")
             ),
-            "Run `sudo chown root:root <file>` and `sudo chmod 644 <file>` on each, or restore them from the package manager.",
+            "请对每个文件执行 `sudo chown root:root <文件>` 与 `sudo chmod 644 <文件>`，或用软件包管理器恢复。",
         );
     }
 }
@@ -197,7 +197,7 @@ pub(super) fn pam_ordering_remedy(contents: &str) -> &'static str {
     if generated_by_authselect(contents) {
         AUTHSELECT_REMEDY
     } else {
-        "Re-run `sudo pam-auth-update --package` (Debian/Ubuntu) or move the Gaze line above pam_unix.so/pam_fprintd.so."
+        "请重新运行 `sudo pam-auth-update --package`（Debian/Ubuntu），或把 Gaze 那一行移到 pam_unix.so/pam_fprintd.so 之前。"
     }
 }
 
@@ -205,7 +205,7 @@ pub(super) fn pam_retry_remedy(contents: &str) -> &'static str {
     if generated_by_authselect(contents) {
         AUTHSELECT_REMEDY
     } else {
-        "Move the `pam_gaze.so retry` line below pam_unix.so, or re-run `sudo pam-auth-update --package` (Debian/Ubuntu)."
+        "请把 `pam_gaze.so retry` 那一行移到 pam_unix.so 之后，或重新运行 `sudo pam-auth-update --package`（Debian/Ubuntu）。"
     }
 }
 
@@ -273,30 +273,24 @@ pub(super) fn check_pam(report: &mut Report) {
         .any(|path| path.file_name().is_some_and(|name| name == PAM_MODULES[0]));
 
     if installed {
-        report.pass("PAM module", "pam_gaze.so is installed");
+        report.pass("PAM 模块", "pam_gaze.so 已安装");
     } else {
         report.error(
-            "PAM module",
-            "pam_gaze.so is not installed where PAM can load it",
-            "Reinstall the base Gaze package before enabling PAM authentication.",
+            "PAM 模块",
+            "pam_gaze.so 未安装在 PAM 可加载的位置",
+            "启用 PAM 认证前，请先重装 Gaze 基础软件包。",
         );
     }
 
     let insecure = insecurely_owned(&modules);
     if !modules.is_empty() {
         if insecure.is_empty() {
-            report.pass(
-                "PAM permissions",
-                "installed modules are root-owned and not writable by group or others",
-            );
+            report.pass("PAM 权限", "已安装模块属于 root，且同组与其他用户不可写");
         } else {
             report.error(
-                "PAM permissions",
-                format!(
-                    "unsafe ownership or write permissions: {}",
-                    insecure.join(", ")
-                ),
-                "Restore these files from the package manager; do not use writable PAM modules.",
+                "PAM 权限",
+                format!("存在不安全的归属或写权限：{}", insecure.join(", ")),
+                "请用软件包管理器恢复这些文件；不要使用可写的 PAM 模块。",
             );
         }
     }
@@ -304,9 +298,9 @@ pub(super) fn check_pam(report: &mut Report) {
     let references = find_pam_references();
     if references.is_empty() {
         report.warning(
-            "PAM stack",
-            "no active /etc/pam.d file references a Gaze module",
-            "Follow the PAM guide for your distribution if you want login, sudo, or lock-screen authentication.",
+            "PAM 栈",
+            "/etc/pam.d 下没有任何启用的文件引用 Gaze 模块",
+            "如需登录、sudo 或锁屏认证，请按本发行版对应的 PAM 指南操作。",
         );
     } else {
         let names = references
@@ -315,22 +309,22 @@ pub(super) fn check_pam(report: &mut Report) {
             .map(|name| name.to_string_lossy())
             .collect::<Vec<_>>()
             .join(", ");
-        report.pass("PAM stack", format!("Gaze is referenced by: {names}"));
+        report.pass("PAM 栈", format!("引用 Gaze 的服务：{names}"));
 
         let writable = insecurely_owned(&references);
         if writable.is_empty() {
             report.pass(
-                "PAM stack permissions",
-                "the service files referencing Gaze are root-owned and not writable by group or others",
+                "PAM 栈权限",
+                "引用 Gaze 的服务文件属于 root，且同组与其他用户不可写",
             );
         } else {
             report.error(
-                "PAM stack permissions",
+                "PAM 栈权限",
                 format!(
-                    "anyone in the owning group can make Gaze run their code: {}",
+                    "所属组内任何人都能让 Gaze 运行他们的代码：{}",
                     writable.join(", ")
                 ),
-                "Restore these files from the package manager; do not use writable PAM configuration.",
+                "请用软件包管理器恢复这些文件；不要使用可写的 PAM 配置。",
             );
         }
 
@@ -355,9 +349,9 @@ pub(super) fn check_pam(report: &mut Report) {
                 .collect::<Vec<_>>()
                 .join(", ");
             report.warning(
-                "Deprecated PAM module",
-                format!("pam_gaze_grosshack.so is referenced in: {paths}"),
-                "Replace 'pam_gaze_grosshack.so' with 'pam_gaze.so simultaneous' in those files. pam_gaze_grosshack.so will be removed in a future release.",
+                "已弃用的 PAM 模块",
+                format!("以下文件仍引用 pam_gaze_grosshack.so：{paths}"),
+                "请把这些文件中的 'pam_gaze_grosshack.so' 替换为 'pam_gaze.so simultaneous'。pam_gaze_grosshack.so 将在后续版本中移除。",
             );
         }
 
@@ -368,9 +362,9 @@ pub(super) fn check_pam(report: &mut Report) {
             let conflicts = find_pam_ordering_conflicts(&contents);
             if !conflicts.is_empty() {
                 report.warning(
-                    "PAM ordering",
+                    "PAM 顺序",
                     format!(
-                        "{} runs after {} in {}, so face authentication won't be tried until those prompts resolve",
+                        "在 {} 中 {} 排在 {} 之后，因此在那些提示完成前不会尝试人脸认证",
                         PAM_MODULES.join("/"),
                         conflicts.join(", "),
                         path.display()
@@ -381,9 +375,9 @@ pub(super) fn check_pam(report: &mut Report) {
 
             if find_misplaced_retry_entry(&contents) {
                 report.warning(
-                    "PAM retry ordering",
+                    "PAM 重试顺序",
                     format!(
-                        "pam_gaze.so retry runs before {} in {}, so it can never be reached by a rejected password",
+                        "pam_gaze.so retry 在 {} 中排在 {} 之前，因此密码被拒时永远走不到它",
                         PAM_PASSWORD_MODULE,
                         path.display()
                     ),
@@ -400,24 +394,24 @@ pub(super) fn check_pam(report: &mut Report) {
 pub(super) fn shared_stack_hint_for(os_release: &str) -> &'static str {
     let os_release = os_release.to_ascii_lowercase();
     if os_release.contains("suse") {
-        "Run `sudo pam-config --add --gaze` then `sudo pam-config --update`, and confirm pam_gaze.so appears in /etc/pam.d/common-auth. See https://gaze.gundulabs.com/guide/pam"
+        "请运行 `sudo pam-config --add --gaze` 与 `sudo pam-config --update`，并确认 pam_gaze.so 出现在 /etc/pam.d/common-auth 中。详见 https://gaze.gundulabs.com/guide/pam"
     } else if ["fedora", "rhel", "centos"]
         .iter()
         .any(|family| os_release.contains(family))
     {
-        "Run `sudo authselect select gaze with-silent-lastlog --force`. See https://gaze.gundulabs.com/guide/pam"
+        "请运行 `sudo authselect select gaze with-silent-lastlog --force`。详见 https://gaze.gundulabs.com/guide/pam"
     } else if ["debian", "ubuntu"]
         .iter()
         .any(|family| os_release.contains(family))
     {
-        "Run `sudo pam-auth-update --package` and enable the Gaze profile. See https://gaze.gundulabs.com/guide/pam"
+        "请运行 `sudo pam-auth-update --package` 并启用 Gaze 配置。详见 https://gaze.gundulabs.com/guide/pam"
     } else if ["arch", "manjaro", "omarchy"]
         .iter()
         .any(|family| os_release.contains(family))
     {
-        "Add 'auth        sufficient    pam_gaze.so' above the first auth line of /etc/pam.d/sudo. See https://gaze.gundulabs.com/guide/pam"
+        "请在 /etc/pam.d/sudo 的第一条 auth 行之前添加 'auth        sufficient    pam_gaze.so'。详见 https://gaze.gundulabs.com/guide/pam"
     } else {
-        "Add 'auth        sufficient    pam_gaze.so' above the first auth line of your shared auth stack (/etc/pam.d/system-auth, or /etc/pam.d/common-auth on openSUSE). See https://gaze.gundulabs.com/guide/pam"
+        "请在共享认证栈（/etc/pam.d/system-auth，openSUSE 上为 /etc/pam.d/common-auth）的第一条 auth 行之前添加 'auth        sufficient    pam_gaze.so'。详见 https://gaze.gundulabs.com/guide/pam"
     }
 }
 
@@ -432,26 +426,22 @@ pub(super) fn check_elevation_pam(report: &mut Report) {
     }
     if pam_service_reaches_gaze(ELEVATION_PAM_SERVICE, 2) {
         report.pass(
-            "Elevation PAM",
-            format!("the {ELEVATION_PAM_SERVICE} service reaches a Gaze module"),
+            "提权 PAM",
+            format!("{ELEVATION_PAM_SERVICE} 服务会调用 Gaze 模块"),
         );
     } else if Path::new(PAM_SUDO_OPTOUT_PATH).exists() {
         report.off(
-            "Elevation PAM",
+            "提权 PAM",
+            format!("{ELEVATION_PAM_SERVICE} 的人脸认证已被排除，终端提权始终要求输入密码"),
             format!(
-                "face authentication for {ELEVATION_PAM_SERVICE} is opted out, so terminal elevation always asks for a password"
-            ),
-            format!(
-                "Turn it back on: `sudo rm {PAM_SUDO_OPTOUT_PATH}`. {}",
+                "重新开启方法：`sudo rm {PAM_SUDO_OPTOUT_PATH}`。{}",
                 shared_stack_hint()
             ),
         );
     } else {
         report.warning(
-            "Elevation PAM",
-            format!(
-                "the {ELEVATION_PAM_SERVICE} service reaches no Gaze module, so terminal elevation falls straight through to the password stack"
-            ),
+            "提权 PAM",
+            format!("{ELEVATION_PAM_SERVICE} 服务不会调用 Gaze 模块，终端提权会直接落到密码栈"),
             shared_stack_hint(),
         );
     }
@@ -557,13 +547,11 @@ pub(super) fn report_sudo_policy(
     policy: SudoPolicy,
     suse: bool,
 ) {
-    const NAME: &str = "Sudo policy";
+    const NAME: &str = "Sudo 策略";
     match policy {
         SudoPolicy::AuthenticatesInvoker => report.pass(
             NAME,
-            format!(
-                "sudo authenticates {username}, so their face enrollment covers terminal elevation"
-            ),
+            format!("sudo 认证的是 {username}，其已录入的人脸可用于终端提权"),
         ),
         SudoPolicy::AuthenticatesTarget(option) => {
             let fix = if suse {
@@ -605,13 +593,13 @@ pub(super) fn check_polkit_pam(report: &mut Report) {
         return;
     }
     if pam_service_reaches_gaze("polkit-1", 2) {
-        report.pass("Polkit PAM", "the polkit-1 service reaches a Gaze module");
+        report.pass("Polkit PAM", "polkit-1 服务会调用 Gaze 模块");
     } else {
         report.warning(
             "Polkit PAM",
-            "the polkit-1 service reaches no Gaze module, so graphical authentication prompts fall straight through to the password stack",
+            "polkit-1 服务不会调用 Gaze 模块，图形化认证提示会直接落到密码栈",
             format!(
-                "Add 'auth        sufficient    pam_gaze.so' above the first auth line of {POLKIT_PAM_FILE}, copying {VENDOR_PAM_DIR}/polkit-1 there first if it does not exist, then restart polkit. See https://gaze.gundulabs.com/guide/pam"
+                "请在 {POLKIT_PAM_FILE} 的第一条 auth 行之前添加 'auth        sufficient    pam_gaze.so'；若该文件不存在，先复制 {VENDOR_PAM_DIR}/polkit-1 过去，然后重启 polkit。详见 https://gaze.gundulabs.com/guide/pam"
             ),
         );
     }
@@ -654,7 +642,7 @@ mod tests {
             report
                 .checks
                 .into_iter()
-                .find(|check| check.name == "Sudo policy")
+                .find(|check| check.name == "Sudo 策略")
         };
 
         let check = reported(SudoPolicy::AuthenticatesInvoker, true).unwrap();

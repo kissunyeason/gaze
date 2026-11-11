@@ -18,6 +18,8 @@
 
 ---
 
+> 中文说明：见 [README.zh-CN.md](README.zh-CN.md)。本仓库是自动同步上游的汉化分支。
+
 > [!NOTE]
 > Gaze includes local liveness anti-spoofing checks and supports infrared (IR) cameras. In high-security environments, we recommend keeping your usual system authentication enabled as a fallback.
 
