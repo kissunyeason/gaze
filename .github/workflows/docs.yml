@@ -54,7 +54,8 @@ jobs:
 
   deploy:
     name: Deploy
-    if: ${{ github.event_name != 'pull_request' }}
+    # 本仓库是汉化分支：未开启 GitHub Pages，部署仅在官方仓库执行。
+    if: ${{ github.event_name != 'pull_request' && github.repository == 'GunduLabs/gaze' }}
     needs: build
     runs-on: ubuntu-latest
     concurrency:
