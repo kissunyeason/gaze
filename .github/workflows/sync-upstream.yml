@@ -25,6 +25,7 @@ concurrency:
 permissions:
   contents: write
   issues: write
+  actions: write
 
 jobs:
   sync:
@@ -106,6 +107,10 @@ jobs:
 
           git tag -a "$tag" -m "Gaze 中文版 $tag"
           git push origin "$tag"
+
+          # GITHUB_TOKEN 创建的 tag 不会触发 push 事件，这里手动触发
+          # 官方 CD（deb/rpm/arch/flatpak/srpm 全量包构建并上传到 Release）。
+          gh workflow run cd.yml --ref main -f tag="$tag"
 
           {
             echo "基于上游 \`${version}\` 构建的简体中文版本。"

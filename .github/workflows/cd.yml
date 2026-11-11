@@ -29,8 +29,6 @@ env:
 jobs:
   build-native:
     name: Build ${{ matrix.name }}
-    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
-    if: github.repository == 'GunduLabs/gaze'
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     env:
@@ -338,8 +336,6 @@ jobs:
 
   package-native:
     name: Package ${{ matrix.name }}
-    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
-    if: github.repository == 'GunduLabs/gaze'
     needs: build-native
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
@@ -379,8 +375,8 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
         run: |
           if [ -z "$GPG_PRIVATE_KEY" ]; then
-            echo "::error::PACKAGE_SIGNING_KEY is empty; refusing to publish unsigned packages"
-            exit 1
+            echo "PACKAGE_SIGNING_KEY 未设置：产出未签名软件包（fork 模式）"
+            exit 0
           fi
           key_file="$RUNNER_TEMP/nfpm-signing-key.asc"
           (umask 077 && printf '%s' "$GPG_PRIVATE_KEY" > "$key_file")
@@ -418,8 +414,6 @@ jobs:
 
   build-flatpak:
     name: Build flatpak (${{ matrix.arch }})
-    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
-    if: github.repository == 'GunduLabs/gaze'
     runs-on: ${{ matrix.runner }}
     env:
       DEPLOY_REF_NAME: ${{ inputs.tag || github.ref_name }}
@@ -444,24 +438,8 @@ jobs:
         with:
           just-version: ${{ env.JUST_VERSION }}
 
-      - name: Require signing key
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
-        run: |
-          if [ -z "$GPG_PRIVATE_KEY" ]; then
-            echo "::error::PACKAGE_SIGNING_KEY is empty; refusing to publish an unsigned flatpak"
-            exit 1
-          fi
-
-      - name: Import GPG key for flatpak signing
-        id: import_gpg
-        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
-        with:
-          gpg_private_key: ${{ secrets.PACKAGE_SIGNING_KEY }}
-
       - name: Build flatpak repo and bundle
         env:
-          FLATPAK_GPG_SIGN: ${{ steps.import_gpg.outputs.fingerprint }}
           FLATPAK_BUILDER_JOBS: 4
         run: |
           VERSION="${DEPLOY_REF_NAME#v}" just build-flatpak
@@ -483,8 +461,6 @@ jobs:
 
   build-srpm:
     name: Build source RPM for Copr
-    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
-    if: github.repository == 'GunduLabs/gaze'
     runs-on: ubuntu-latest
     container: fedora:45
     env:
@@ -527,8 +503,8 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
         run: |
           if [ -z "$GPG_PRIVATE_KEY" ]; then
-            echo "::error::PACKAGE_SIGNING_KEY is empty; refusing to publish an unsigned source RPM"
-            exit 1
+            echo "PACKAGE_SIGNING_KEY 未设置：产出未签名 source RPM（fork 模式）"
+            exit 0
           fi
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
           fingerprint="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }')"
@@ -566,8 +542,6 @@ jobs:
 
   release-github:
     name: Upload packages to GitHub Release
-    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
-    if: github.repository == 'GunduLabs/gaze'
     runs-on: ubuntu-latest
     permissions:
       contents: write

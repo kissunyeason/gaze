@@ -308,6 +308,10 @@ _nfpm config format:
 
     tmp_config=$(mktemp)
     envsubst '$MULTIARCH $OPENCV_MIN $OPENCV_NEXT $DEB_LIB_DEPENDS $RPM_LIB_DEPENDS $RPM_GSTREAMER_BASE $RPM_GSTREAMER_GOOD $RPM_GSTREAMER_PIPEWIRE $KCM_CONTENTS $KCM_DEPENDS $KCM_RECOMMENDS' < {{ quote(config) }} > "$tmp_config"
+    # fork：未提供签名密钥时剥离 signature 段，产出未签名软件包。
+    if [ -z "${NFPM_SIGNING_KEY_FILE:-}" ]; then
+        sed -i '/^  signature:/,+2d' "$tmp_config"
+    fi
     {{ quote(nfpm) }} pkg -f "$tmp_config" --packager {{ format }} --target dist/packages
     rm -f "$tmp_config"
 
