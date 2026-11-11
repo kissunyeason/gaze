@@ -110,7 +110,7 @@ jobs:
 
           # GITHUB_TOKEN 创建的 tag 不会触发 push 事件，这里手动触发
           # 官方 CD（deb/rpm/arch/flatpak/srpm 全量包构建并上传到 Release）。
-          gh workflow run cd.yml --ref main -f tag="$tag"
+          gh workflow run cd.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$tag"
 
           {
             echo "基于上游 \`${version}\` 构建的简体中文版本。"
