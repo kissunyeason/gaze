@@ -512,7 +512,18 @@ jobs:
 
       - name: Build source RPM
         run: |
-          VERSION="${DEPLOY_REF_NAME#v}" just srpm
+          set -euo pipefail
+          ref="${DEPLOY_REF_NAME#v}"
+          # RPM 的 Version 字段禁止 '-'：把中文版序号挪到 Release（如 0.5.1-cn.3 → 0.5.1 + 1.cn3）
+          if [[ "$ref" == *-cn.* ]]; then
+            version="${ref%%-cn.*}"
+            cn="${ref##*-cn.}"
+            release="1.cn${cn}"
+          else
+            version="$ref"
+            release="1"
+          fi
+          VERSION="$version" PACKAGE_RELEASE="$release" just srpm
           ls -lh dist/packages/
 
       - name: Upload source RPM artifact
@@ -542,6 +553,8 @@ jobs:
 
   release-github:
     name: Upload packages to GitHub Release
+    # 只要有 deb/rpm/arch 或 flatpak 构建成功就上传，srpm 失败不拖累其余产物。
+    if: ${{ !cancelled() && (needs.package-native.result == 'success' || needs.build-flatpak.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
