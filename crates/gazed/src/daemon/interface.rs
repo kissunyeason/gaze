@@ -291,6 +291,16 @@ impl AuthDaemon {
         #[zbus(header)] header: Header<'_>,
         face_name: String,
     ) -> fdo::Result<()> {
+        self.enroll_start_on(ctxt, header, face_name, 0).await
+    }
+
+    async fn enroll_start_on(
+        &self,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
+        #[zbus(header)] header: Header<'_>,
+        face_name: String,
+        camera_system: u32,
+    ) -> fdo::Result<()> {
         let claim = self.check_claim(&header).await?;
         let username = claim.username.clone();
         Self::ensure_face_write_access(&header, &username, POLKIT_ACTION_MANAGE_FACES).await?;
@@ -308,11 +318,23 @@ impl AuthDaemon {
         let detector_arc = sessions.rgb.detector;
         let recognizer_rgb_arc = sessions.rgb.recognizer;
         let ir_models = sessions.ir;
-        let sources = resolve_configured_sources(&config.cameras);
+        let Some(cameras) = config
+            .cameras
+            .systems()
+            .into_iter()
+            .nth(camera_system as usize)
+        else {
+            return Err(fdo::Error::InvalidArgs(format!(
+                "camera system {camera_system} is not configured"
+            )));
+        };
+        let sources = resolve_configured_sources(&cameras);
         let rgb_device = sources.rgb;
         let ir_device = sources.ir;
         let ir_node = sources.ir_node;
-        let emitter_enabled = config.cameras.emitter_enabled;
+        let emitter_enabled = cameras.emitter_enabled;
+        let mut system_config: Config = (*config).clone();
+        system_config.cameras = cameras;
         let conn = ctxt.connection().clone();
         let path = ctxt.path().to_owned();
         let claim_state = self.claim_state.clone();
@@ -332,7 +354,7 @@ impl AuthDaemon {
             if run_ir && rgb_continues_without_ir(config.security.hybrid_policy(), run_rgb) {
                 let source = ir_device.clone();
                 let disconnected = tokio::task::spawn_blocking(move || {
-                    gaze_vision::camera::camera_disconnected(&source, false)
+                    gaze_vision::camera::camera_disconnected(&source, false, false)
                 })
                 .await
                 .unwrap_or(false);
@@ -344,7 +366,7 @@ impl AuthDaemon {
 
             if !run_rgb && !run_ir {
                 error!("No cameras configured for enrollment");
-                let _ = Self::enroll_status(&ctxt, &face_name, 0, 5, true, EnrollPrompt::Cancelled, -1.0).await;
+                let _ = Self::enroll_status(&ctxt, &face_name, 0, 5, true, EnrollPrompt::CameraFailed, -1.0).await;
                 return;
             }
 
@@ -394,7 +416,7 @@ impl AuthDaemon {
                 let stop_clone = stop_flag.clone();
                 let tx = enroll_tx.clone();
                 let detector_arc = detector_arc.clone();
-                let config_clone = config.clone();
+                let config_clone = system_config.clone();
                 let recognizer_rgb_arc = recognizer_rgb_arc.clone();
                 let completed_steps_clone = completed_steps_atomic.clone();
                 let rgb_device_clone = rgb_device.clone();
@@ -426,7 +448,10 @@ impl AuthDaemon {
                                 continue;
                             }
 
-                            let mut cam = match Camera::open_rgb_privileged(&rgb_device_clone) {
+                            let mut cam = match Camera::open_rgb_privileged(
+                                &rgb_device_clone,
+                                config_clone.cameras.nonphysical_rgb_opt_in(),
+                            ) {
                                 Ok(c) => c,
                                 Err(e) => {
                                     dead_streams += 1;
@@ -508,7 +533,10 @@ impl AuthDaemon {
                         }
                     }
 
-                    let mut cam = match Camera::open_rgb_privileged(&rgb_device_clone) {
+                    let mut cam = match Camera::open_rgb_privileged(
+                        &rgb_device_clone,
+                        config_clone.cameras.nonphysical_rgb_opt_in(),
+                    ) {
                         Ok(c) => c,
                         Err(e) => {
                             let _ = tx.blocking_send(EnrollMsg::Error(format!("RGB Camera open error: {e}")));
@@ -596,7 +624,7 @@ impl AuthDaemon {
                 let stop_clone = stop_flag.clone();
                 let tx = enroll_tx.clone();
                 let detector_arc = ir_models.detector;
-                let config_clone = config.clone();
+                let config_clone = system_config.clone();
                 let recognizer_ir_arc = ir_models.recognizer;
                 let completed_steps_clone = completed_steps_atomic.clone();
                 let ir_device_clone = ir_device.clone();
@@ -833,12 +861,15 @@ impl AuthDaemon {
 
             let mut last_sent_prompt = None;
             let mut aborted = false;
+            let mut hold_until: Option<tokio::time::Instant> = None;
 
-            while completed_steps < max_steps as usize {
-                let prompt = prompts[completed_steps];
-                if last_sent_prompt != Some(prompt) {
-                    let _ = Self::enroll_status(&ctxt, &face_name, completed_steps as u32, max_steps, false, prompt, 0.0).await;
-                    last_sent_prompt = Some(prompt);
+            while completed_steps < max_steps as usize || hold_until.is_some() {
+                if hold_until.is_none() {
+                    let prompt = prompts[completed_steps];
+                    if last_sent_prompt != Some(prompt) {
+                        let _ = Self::enroll_status(&ctxt, &face_name, completed_steps as u32, max_steps, false, prompt, 0.0).await;
+                        last_sent_prompt = Some(prompt);
+                    }
                 }
 
                 tokio::select! {
@@ -852,7 +883,10 @@ impl AuthDaemon {
                     Some(jpeg) = preview_rx.recv() => {
                         let _ = Self::preview_frame(&ctxt, &jpeg).await;
                     }
-                    msg_opt = enroll_rx.recv() => {
+                    _ = tokio::time::sleep_until(hold_until.unwrap_or_else(tokio::time::Instant::now)), if hold_until.is_some() => {
+                        hold_until = None;
+                    }
+                    msg_opt = enroll_rx.recv(), if hold_until.is_none() => {
                         let Some(msg) = msg_opt else {
                             warn!("EnrollStart: all capture threads exited before enrollment finished");
                             let _ = Self::enroll_status(&ctxt, &face_name, completed_steps as u32, max_steps, true, EnrollPrompt::CameraFailed, -1.0).await;
@@ -926,7 +960,7 @@ impl AuthDaemon {
                                     completed_steps_atomic.store(completed_steps as u32, std::sync::atomic::Ordering::Relaxed);
 
                                     let _ = Self::enroll_status(&ctxt, &face_name, completed_steps as u32, max_steps, false, EnrollPrompt::Captured, 0.0).await;
-                                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                    hold_until = Some(tokio::time::Instant::now() + Duration::from_millis(500));
                                 }
                             }
                             EnrollMsg::Error(e) => {
@@ -947,7 +981,7 @@ impl AuthDaemon {
             let state = claim_state.lock().await;
             if !aborted && claim_has_epoch(&state, claim.epoch) {
                 let mut db = db_arc.lock().await;
-                // Stop/replacement may arrive during the pause after the last capture.
+                // Stop/replacement may arrive between the loop exiting and this lock.
                 let saved = if rx.try_recv() == Err(oneshot::error::TryRecvError::Empty) {
                     let now_secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1016,6 +1050,20 @@ impl AuthDaemon {
         let db = self.db.lock().await;
         db.has_enrolled_faces(&username)
             .map_err(Self::map_user_db_error)
+    }
+
+    async fn credential_status(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+        username: String,
+    ) -> fdo::Result<(bool, bool)> {
+        Self::ensure_user_query_access(&header, &username, POLKIT_ACTION_MANAGE_FACES).await?;
+        use gaze_security::keyring::{Backend, credential_present};
+        let gnome = credential_present(Backend::Gnome, &username)
+            .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+        let kwallet = credential_present(Backend::KWallet, &username)
+            .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+        Ok((gnome, kwallet))
     }
 
     async fn is_camera_available(&self, #[zbus(header)] header: Header<'_>) -> fdo::Result<bool> {

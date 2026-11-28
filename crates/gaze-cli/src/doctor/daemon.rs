@@ -224,8 +224,10 @@ pub(super) async fn connect_daemon(report: &mut Report) -> Option<Daemon> {
         // once rather than repeating it as separate camera and enrollment faults.
         let (message, fix) = if daemon_starting && gaze_core::cpu::supports_inference() {
             (
-                "gazed 正在运行，但尚未占用 com.gundulabs.Gaze（可能正在下载模型）".to_string(),
-                "请等待首次模型下载完成，然后重新运行 `gaze doctor`。".to_string(),
+                "gazed 正在运行，但尚未占用 com.gundulabs.Gaze（可能正在下载模型）"
+                    .to_string(),
+                "请等待首次模型下载完成，然后重新运行 `gaze doctor`。"
+                    .to_string(),
             )
         } else {
             gaze_core::dbus::daemon_unavailable_hint(proxy.inner().connection()).await
@@ -256,7 +258,10 @@ pub(super) async fn connect_daemon(report: &mut Report) -> Option<Daemon> {
         Ok(Err(err)) => {
             report.error(
                 "Daemon",
-                format!("gazed 未返回配置：{}", dbus_error_message(&err)),
+                format!(
+                    "gazed 未返回配置：{}",
+                    dbus_error_message(&err)
+                ),
                 "请重启 gazed 并查看其日志。",
             );
             None
@@ -287,7 +292,10 @@ pub(super) async fn check_daemon(
     };
 
     match tokio::time::timeout(DAEMON_TIMEOUT, proxy.is_camera_available()).await {
-        Ok(Ok(true)) => report.pass("摄像头会话", "守护进程可以访问当前 PipeWire 会话"),
+        Ok(Ok(true)) => report.pass(
+            "摄像头会话",
+            "守护进程可以访问当前 PipeWire 会话",
+        ),
         Ok(Ok(false)) => report.error(
             "摄像头会话",
             "守护进程找不到可用的 PipeWire 运行时会话",
@@ -335,7 +343,10 @@ pub(super) async fn check_daemon(
                         "对缺少所配置摄像头光谱的配置运行 `gaze refine-face <名称>`。",
                     );
                 } else {
-                    report.pass("录入覆盖度", "所有配置均覆盖了已配置的摄像头光谱");
+                    report.pass(
+                        "录入覆盖度",
+                        "所有配置均覆盖了已配置的摄像头光谱",
+                    );
                 }
             }
         }
@@ -346,7 +357,10 @@ pub(super) async fn check_daemon(
         ),
         Ok(Err(err)) => report.error(
             "Enrollment",
-            format!("无法列出 {username} 的人脸：{}", dbus_error_message(&err)),
+            format!(
+                "无法列出 {username} 的人脸：{}",
+                dbus_error_message(&err)
+            ),
             "请运行 `gaze list-faces` 并查看守护进程日志。",
         ),
         Err(_) => report.error(
@@ -414,7 +428,11 @@ pub(super) async fn check_benchmark(report: &mut Report, proxy: &GazeProxy<'_>) 
             format!("gazed 无法执行性能测试：{err}"),
             "请重启 gazed 并查看其日志。",
         ),
-        Err(_) => report.warning("Benchmark", "性能测试超时", "请重启 gazed 并查看其日志。"),
+        Err(_) => report.warning(
+            "Benchmark",
+            "性能测试超时",
+            "请重启 gazed 并查看其日志。",
+        ),
     }
 }
 

@@ -164,12 +164,12 @@ jobs:
           运行记录：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EOF
 
-          existing="$(gh issue list --label upstream-conflict --state open --json number --jq '.[0].number // empty')"
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --label upstream-conflict --state open --json number --jq '.[0].number // empty')"
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body-file body.md
+            gh issue comment --repo "$GITHUB_REPOSITORY" "$existing" --body-file body.md
           else
-            gh label create upstream-conflict --description "上游自动合并冲突" --color B60205 || true
-            gh issue create --title "上游同步冲突，需要手工合并" --body-file body.md --label upstream-conflict
+            gh label create --repo "$GITHUB_REPOSITORY" upstream-conflict --description "上游自动合并冲突" --color B60205 || true
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "上游同步冲突，需要手工合并" --body-file body.md --label upstream-conflict
           fi
 
   release:

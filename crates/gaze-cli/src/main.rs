@@ -7,6 +7,7 @@ mod faces;
 mod keyring;
 mod polkit;
 mod selinux;
+mod setup;
 mod tui;
 mod uninstall;
 
@@ -74,7 +75,8 @@ fn command_requires_root(command: &Commands) -> Option<&'static str> {
         Commands::RenameFace { .. } => Some("rename-face"),
         Commands::ClearUser { .. } => Some("clear-user"),
         Commands::Keyring { .. } => Some("keyring"),
-        Commands::AddFace { .. }
+        Commands::Setup
+        | Commands::AddFace { .. }
         | Commands::RefineFace { .. }
         | Commands::Config { .. }
         | Commands::Test { .. }
@@ -88,7 +90,7 @@ fn command_requires_root(command: &Commands) -> Option<&'static str> {
 // Root skips polkit, and polkit is what refuses a face match for these, so sudo must not front them.
 fn command_needs_password_authorization(command: &Commands) -> bool {
     match command {
-        Commands::AddFace { .. } | Commands::RefineFace { .. } => true,
+        Commands::Setup | Commands::AddFace { .. } | Commands::RefineFace { .. } => true,
         Commands::Config { show, action } => match action {
             Some(ConfigAction::Get { .. }) => false,
             Some(ConfigAction::Set { .. }) => true,
@@ -238,7 +240,7 @@ where
             cancellable,
             tick,
         })?;
-        if let Some(TuiAction::Cancel) = tui::poll_action()?
+        if let Some(TuiAction::Cancel | TuiAction::Interrupt) = tui::poll_action()?
             && cancellable
         {
             drop(terminal);
@@ -266,6 +268,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Check your camera, enroll, test recognition, and check desktop integration
+    Setup,
     /// 测试人脸验证，不授予权限，也不测试 PAM
     #[command(
         visible_alias = "auth",
@@ -278,10 +282,14 @@ enum Commands {
             short,
             long,
             conflicts_with = "silent",
-            help = "为兼容性保留；默认已显示详细指标"
+            help = "Show recognition metrics and diagnostic details"
         )]
         verbose: bool,
-        #[arg(short, long, help = "不显示终端界面与任何输出，仅通过退出码报告结果")]
+        #[arg(
+            short,
+            long,
+            help = "不显示终端界面与任何输出，仅通过退出码报告结果"
+        )]
         silent: bool,
     },
     /// 通过多角度引导采集录入一张人脸
@@ -290,6 +298,12 @@ enum Commands {
         user: Option<String>,
         #[arg(help = "要录入的人脸名称")]
         face: String,
+        #[arg(
+            long,
+            default_value_t = 0,
+            help = "Capture with this camera system: 0 for [cameras], 1 for the first [[cameras.fallback]]"
+        )]
+        camera: u32,
     },
     /// 补充采集画面，提升已录入人脸的识别效果
     RefineFace {
@@ -297,6 +311,12 @@ enum Commands {
         user: Option<String>,
         #[arg(help = "要优化的人脸名称", add = ArgValueCompleter::new(face_completer))]
         face: String,
+        #[arg(
+            long,
+            default_value_t = 0,
+            help = "Capture with this camera system: 0 for [cameras], 1 for the first [[cameras.fallback]]"
+        )]
+        camera: u32,
     },
     /// 列出某个用户已录入的人脸
     ListFaces {
@@ -356,9 +376,19 @@ enum Commands {
     },
     /// 检查 Gaze 安装的配置与运行时问题
     Doctor {
+        #[arg(
+            short,
+            long,
+            help = "Show successful and disabled checks as well as problems"
+        )]
+        verbose: bool,
         #[arg(short, long, help = "检查该用户的录入情况")]
         user: Option<String>,
-        #[arg(short, long, help = "测试检测、识别与活体模型的推理速度")]
+        #[arg(
+            short,
+            long,
+            help = "测试检测、识别与活体模型的推理速度"
+        )]
         benchmark: bool,
         #[arg(long, conflicts_with = "report", help = "以 JSON 输出结果")]
         json: bool,
@@ -384,10 +414,13 @@ enum ConfigAction {
     Set { key: String, value: String },
 }
 
+const ENROLLMENT_DEADLINE: Duration = Duration::from_secs(240);
+
 async fn handle_enroll(
     proxy: &GazeProxy<'_>,
     user: &str,
     face: &str,
+    camera_system: u32,
     is_refine: bool,
 ) -> anyhow::Result<()> {
     let term = Term::stdout();
@@ -409,7 +442,12 @@ async fn handle_enroll(
             return Err(err);
         }
     };
-    if let Err(err) = proxy.enroll_start(face).await {
+    let started = if camera_system == 0 {
+        proxy.enroll_start(face).await
+    } else {
+        proxy.enroll_start_on(face, camera_system).await
+    };
+    if let Err(err) = started {
         drop(terminal);
         let _ = proxy.release().await;
         exit_with_error(&describe_dbus_error(proxy, "无法开始录入", &err).await);
@@ -419,7 +457,7 @@ async fn handle_enroll(
     let mut current_capture_msg = "正在等待人脸…".to_string();
     let mut current_capture_tone = Tone::Info;
     let mut current_progress = 0_u32;
-    let mut current_max = 100_u32;
+    let mut current_max = 0_u32;
     let mut current_time_remaining = None;
     let mut confirm_cancel = false;
     let mut tick = 0_u64;
@@ -427,6 +465,12 @@ async fn handle_enroll(
     let mut is_cancelled = false;
     let mut is_completed = false;
     let mut is_failed = false;
+    let mut timed_out = false;
+    let deadline = tokio::time::Instant::now() + ENROLLMENT_DEADLINE;
+    let bus = zbus::fdo::DBusProxy::new(proxy.inner().connection())
+        .await
+        .ok();
+    let mut owner_check = tokio::time::interval(Duration::from_secs(1));
     loop {
         terminal.draw_enroll(&EnrollScreen {
             user,
@@ -491,6 +535,24 @@ async fn handle_enroll(
                     current_capture_tone = capture_tone(status);
                 }
             }
+            _ = tokio::time::sleep_until(deadline) => {
+                current_enroll_msg = "Enrollment timed out".to_string();
+                timed_out = true;
+                is_failed = true;
+                break;
+            }
+            _ = owner_check.tick() => {
+                if let Some(bus) = &bus
+                    && !bus
+                        .name_has_owner(proxy.inner().destination().clone())
+                        .await
+                        .unwrap_or(false)
+                {
+                    current_enroll_msg = "Lost contact with the Gaze daemon".to_string();
+                    is_failed = true;
+                    break;
+                }
+            }
             _ = tokio::time::sleep(Duration::from_millis(80)) => {
                 tick = tick.wrapping_add(1);
             }
@@ -499,12 +561,15 @@ async fn handle_enroll(
 
     drop(terminal);
 
-    if is_cancelled {
+    if is_cancelled || timed_out {
         let _ = proxy.enroll_stop().await;
     }
     let _ = proxy.release().await;
     if is_cancelled {
-        Term::stderr().write_line(&format!("\\n{} 已取消录入", style("✗").red().bold()))?;
+        Term::stderr().write_line(&format!(
+            "\\n{} 已取消录入",
+            style("✗").red().bold()
+        ))?;
         std::process::exit(130);
     }
     if is_completed {
@@ -514,6 +579,7 @@ async fn handle_enroll(
             style(user).green(),
             style(face).green()
         ))?;
+        term.write_line("Next: run gaze test, then gaze doctor to check desktop integration.")?;
     } else if is_failed {
         Term::stderr().write_line(&format!(
             "{} 录入失败：{}",
@@ -525,14 +591,21 @@ async fn handle_enroll(
     Ok(())
 }
 
-async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow::Result<()> {
+async fn handle_test(
+    proxy: &GazeProxy<'_>,
+    user: &str,
+    silent: bool,
+    verbose: bool,
+) -> anyhow::Result<()> {
     let term = Term::stdout();
 
     let has_faces = match proxy.list_faces(user).await {
         Ok(faces) => !faces.is_empty(),
         Err(ref e) if gaze_core::dbus::dbus_is_file_not_found(e) => false,
         Err(_) if silent => std::process::exit(1),
-        Err(e) => exit_with_error(&describe_dbus_error(proxy, "读取已录入人脸失败", &e).await),
+        Err(e) => {
+            exit_with_error(&describe_dbus_error(proxy, "读取已录入人脸失败", &e).await)
+        }
     };
     if !has_faces {
         if !silent {
@@ -540,7 +613,7 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
                 "{} 用户 {} 尚未录入人脸。请运行 {} 录入。",
                 style("i").cyan().bold(),
                 style(user).bold(),
-                style("gaze add-face <名称>").bold()
+                style("gaze add-face default").bold()
             ))?;
         }
         std::process::exit(1);
@@ -558,7 +631,7 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
     let mut status_stream = proxy.receive_verify_status().await?;
     let mut capture_stream = proxy.receive_face_status().await?;
     let mut diagnostic_stream = proxy.receive_verify_diagnostic().await?;
-    let mut terminal = if !silent {
+    let mut terminal = if !silent && interactive_terminal() {
         match TuiTerminal::new() {
             Ok(terminal) => Some(terminal),
             Err(err) => {
@@ -586,7 +659,8 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
     let mut timed_out = false;
     let mut verify_result = None;
     let mut diagnostics = Vec::new();
-    let deadline = tokio::time::Instant::now() + gaze_core::dbus::VERIFY_CLIENT_TIMEOUT;
+    let cameras = Config::load().unwrap_or_default().cameras;
+    let deadline = tokio::time::Instant::now() + gaze_core::dbus::verify_client_timeout(&cameras);
 
     loop {
         if let Some(ref mut terminal) = terminal {
@@ -598,7 +672,7 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
                 tick,
             })?;
 
-            if let Some(TuiAction::Cancel) = tui::poll_action()? {
+            if let Some(TuiAction::Cancel | TuiAction::Interrupt) = tui::poll_action()? {
                 cancelled = true;
                 break;
             }
@@ -671,7 +745,7 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
         std::process::exit(1);
     }
 
-    if !silent {
+    if !silent && verbose {
         for message in &diagnostics {
             println!("{message}");
         }
@@ -682,7 +756,7 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
 
     let mut authenticated = false;
     if let Some((result, faces, rgb_status, ir_status)) = verify_result {
-        if !silent && !faces.is_empty() {
+        if !silent && verbose && !faces.is_empty() {
             println!(
                 "\n{:<20} {:>10} {:>8} {:>8} {:>10} {:>8} {:>8}",
                 style("Face").bold(),
@@ -697,28 +771,48 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
             for (name, rgb_sim, rgb_pct, rgb_passed, ir_sim, ir_pct, ir_passed) in &faces {
                 let rgb_check = if *rgb_passed {
                     style("✓").green()
+                } else if rgb_status == CaptureStatus::Unused {
+                    style("N/A").dim()
                 } else {
                     style("✗").red()
                 };
                 let ir_check = if *ir_passed {
                     style("✓").green()
+                } else if ir_status == CaptureStatus::Unused {
+                    style("N/A").dim()
                 } else {
                     style("✗").red()
                 };
                 println!(
-                    "{:<20} {:>10.4} {:>7.1}% {:>8} {:>10.4} {:>7.1}% {:>8}",
+                    "{:<20} {:>10} {:>8} {:>8} {:>10} {:>8} {:>8}",
                     style(name).cyan(),
-                    rgb_sim,
-                    rgb_pct,
+                    if rgb_status == CaptureStatus::Unused {
+                        "N/A".into()
+                    } else {
+                        format!("{rgb_sim:.4}")
+                    },
+                    if rgb_status == CaptureStatus::Unused {
+                        "N/A".into()
+                    } else {
+                        format!("{rgb_pct:.1}%")
+                    },
                     rgb_check,
-                    ir_sim,
-                    ir_pct,
+                    if ir_status == CaptureStatus::Unused {
+                        "N/A".into()
+                    } else {
+                        format!("{ir_sim:.4}")
+                    },
+                    if ir_status == CaptureStatus::Unused {
+                        "N/A".into()
+                    } else {
+                        format!("{ir_pct:.1}%")
+                    },
                     ir_check
                 );
             }
             println!();
         }
-        if !silent {
+        if !silent && verbose {
             println!(
                 "{} RGB：{} | 红外：{}",
                 style("状态：").bold(),
@@ -744,12 +838,11 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
                         };
                         (n.clone(), pct)
                     });
-                if let Some((face, pct)) = matched {
+                if let Some((face, _pct)) = matched {
                     term.write_line(&format!(
-                        "{} 人脸验证通过：{}（{:.1}%，{} 毫秒）",
+                        "{} Face recognized: {} ({}ms)",
                         style("✓").green().bold(),
                         style(&face).green().bold(),
-                        pct,
                         start.elapsed().as_millis()
                     ))?;
                 } else {
@@ -764,7 +857,20 @@ async fn handle_test(proxy: &GazeProxy<'_>, user: &str, silent: bool) -> anyhow:
         }
     }
 
+    if authenticated && !silent && !verbose {
+        println!(
+            "Recognition passed. Run gaze doctor to check lock screen and login integration; use --verbose for metrics."
+        );
+    }
     if !authenticated && !silent {
+        if !verbose {
+            if let Some(message) = diagnostics.last() {
+                eprintln!("{message}");
+            }
+            eprintln!(
+                "Try again with your face centered and well lit. Use gaze test --verbose for details or gaze doctor for setup issues."
+            );
+        }
         let err_term = Term::stderr();
         err_term.write_line(&format!(
             "{} 人脸验证失败（{} 毫秒）",
@@ -817,7 +923,10 @@ async fn run() -> anyhow::Result<()> {
             let username = user.clone().unwrap_or_else(get_current_user);
             if *forget {
                 gaze_security::keyring::forget_for(backend, &username)?;
-                println!("已删除 {username} 保存的 {} 凭据。", backend.name());
+                println!(
+                    "已删除 {username} 保存的 {} 凭据。",
+                    backend.name()
+                );
             } else {
                 keyring::enroll(&username, &Config::load()?, backend)?;
             }
@@ -829,6 +938,7 @@ async fn run() -> anyhow::Result<()> {
             dry_run,
         } => return handle_uninstall(*yes, *keep_data, *dry_run),
         Commands::Doctor {
+            verbose,
             user,
             benchmark,
             json,
@@ -839,6 +949,8 @@ async fn run() -> anyhow::Result<()> {
                 doctor::Output::Json
             } else if *report {
                 doctor::Output::Report
+            } else if *verbose || *benchmark {
+                doctor::Output::Full
             } else {
                 doctor::Output::Human
             };
@@ -854,26 +966,55 @@ async fn run() -> anyhow::Result<()> {
     let proxy = match connect_gaze().await {
         Ok(proxy) => proxy,
         Err(_) if silent_auth => std::process::exit(1),
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            let daemon_missing =
+                dbus_is_not_activatable(&e) || e.to_string().contains("NameHasNoOwner");
+            if daemon_missing && let Ok(connection) = zbus::Connection::system().await {
+                let (problem, fix) = daemon_unavailable_hint(&connection).await;
+                exit_with_error(&format!("Cannot reach the Gaze daemon: {problem}\n  {fix}"));
+            }
+            return Err(e.into());
+        }
     };
 
     match cli.command {
+        Commands::Setup => setup::run(&proxy).await?,
         Commands::Test {
             user,
-            verbose: _,
+            verbose,
             silent,
         } => {
-            let result = handle_test(&proxy, &user.unwrap_or_else(get_current_user), silent).await;
+            let result = handle_test(
+                &proxy,
+                &user.unwrap_or_else(get_current_user),
+                silent,
+                verbose,
+            )
+            .await;
             if silent && result.is_err() {
                 std::process::exit(1);
             }
             result?;
         }
-        Commands::AddFace { user, face } => {
-            handle_enroll(&proxy, &user.unwrap_or_else(get_current_user), &face, false).await?;
+        Commands::AddFace { user, face, camera } => {
+            handle_enroll(
+                &proxy,
+                &user.unwrap_or_else(get_current_user),
+                &face,
+                camera,
+                false,
+            )
+            .await?;
         }
-        Commands::RefineFace { user, face } => {
-            handle_enroll(&proxy, &user.unwrap_or_else(get_current_user), &face, true).await?;
+        Commands::RefineFace { user, face, camera } => {
+            handle_enroll(
+                &proxy,
+                &user.unwrap_or_else(get_current_user),
+                &face,
+                camera,
+                true,
+            )
+            .await?;
         }
         Commands::ListFaces { user, json } => {
             handle_list_faces(&proxy, &user.unwrap_or_else(get_current_user), json).await?;
@@ -896,7 +1037,8 @@ async fn run() -> anyhow::Result<()> {
                     Ok(loaded) => loaded,
                     Err(err) => match err.downcast_ref::<zbus::Error>() {
                         Some(dbus) => exit_with_error(
-                            &describe_dbus_error(&proxy, "读取配置失败", dbus).await,
+                            &describe_dbus_error(&proxy, "读取配置失败", dbus)
+                                .await,
                         ),
                         None => return Err(err),
                     },
@@ -911,6 +1053,7 @@ async fn run() -> anyhow::Result<()> {
                         apply_config_to_daemon(&proxy, &updated).await
                     };
                     saved.map_err(|e| anyhow::anyhow!("保存配置失败：{e}"))?;
+                    configure::print_apply_notes(&config, &updated);
                     println!("{key} = {}", updated.get_key(&key)?);
                 }
                 None if show => print!("{}", config_show_text(&config)?),
@@ -918,7 +1061,12 @@ async fn run() -> anyhow::Result<()> {
                     // Asking up front keeps a refused password from discarding every answer.
                     if let Err(err) = proxy.authorize_settings().await {
                         exit_with_error(
-                            &describe_dbus_error(&proxy, "修改设置未获授权", &err).await,
+                            &describe_dbus_error(
+                                &proxy,
+                                "修改设置未获授权",
+                                &err,
+                            )
+                            .await,
                         );
                     }
                     run_config_wizard(&Term::stdout(), &proxy, config, keyring_supported).await?
@@ -1009,6 +1157,7 @@ mod tests {
             cli.command,
             Commands::Doctor {
                 user: Some(ref user),
+                verbose: false,
                 benchmark: false,
                 json: false,
                 report: false,

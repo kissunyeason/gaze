@@ -93,6 +93,13 @@ fn main() -> anyhow::Result<()> {
     );
     Config::migrate_file(CONFIG_PATH);
     let config = Config::load()?;
+    let rgb_opt_in = config.cameras.nonphysical_rgb_opt_in();
+    if rgb_opt_in.allow_untrusted_writers {
+        warn!(
+            "cameras.allow_untrusted_rgb_writers is set: any process that can write the RGB \
+             node can feed it frames and pass face authentication"
+        );
+    }
     let _store_lock = UserDatabase::lock_store(std::path::Path::new(USERS_DIR))?;
     if let Some(warning) = gaze_security::storage::encryption_warning(
         gaze_security::storage::disk_encryption_for_paths(&[
@@ -190,7 +197,7 @@ async fn run(mut config: Config) -> anyhow::Result<()> {
         None
     };
 
-    let eye_state = if config.duress.enabled {
+    let eye_state = if config.duress.enabled || config.auth.require_attention {
         match daemon::load_eye_state(&config.inference) {
             Ok(classifier) => Some(classifier),
             Err(e) => {
@@ -317,7 +324,9 @@ async fn run(mut config: Config) -> anyhow::Result<()> {
     }
     db.use_recognizer(security.recognizer())?;
 
-    warn_on_ir_misconfig(&config.cameras);
+    for cameras in config.cameras.systems() {
+        warn_on_ir_misconfig(&cameras);
+    }
 
     let resume_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let resume_seen = Arc::new(std::sync::atomic::AtomicBool::new(

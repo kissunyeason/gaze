@@ -79,7 +79,10 @@ pub(super) fn check_gstreamer_plugins(report: &mut Report) -> bool {
         Ok(missing) => {
             report.error(
                 "GStreamer 插件",
-                format!("缺少必需的摄像头元件：{}", missing.join(", ")),
+                format!(
+                    "缺少必需的摄像头元件：{}",
+                    missing.join(", ")
+                ),
                 gstreamer_package_hint(),
             );
             false
@@ -104,17 +107,32 @@ pub(super) fn check_cameras(report: &mut Report, config: Option<&Config>, config
         return;
     };
 
-    let rgb = config.cameras.rgb.first();
-    if matches!(
-        config.cameras.rgb,
-        gaze_core::config::CameraSources::Ordered(_)
-    ) && !rgb.is_empty()
-    {
+    for (system, (rgb_name, ir_name)) in config.cameras.systems().iter().zip(CAMERA_CHECK_NAMES) {
+        check_camera_system(report, system, rgb_name, ir_name, config_from_file);
+    }
+}
+
+const CAMERA_CHECK_NAMES: [(&str, &str); 1 + gaze_core::config::MAX_CAMERA_FALLBACKS] = [
+    ("RGB 摄像头", "红外摄像头"),
+    ("Fallback 1 RGB camera", "Fallback 1 IR camera"),
+    ("Fallback 2 RGB camera", "Fallback 2 IR camera"),
+    ("Fallback 3 RGB camera", "Fallback 3 IR camera"),
+];
+
+fn check_camera_system(
+    report: &mut Report,
+    system: &gaze_core::config::CameraConfig,
+    rgb_name: &'static str,
+    ir_name: &'static str,
+    config_from_file: bool,
+) {
+    let rgb = system.rgb.first();
+    if matches!(system.rgb, gaze_core::config::CameraSources::Ordered(_)) && !rgb.is_empty() {
         report.pass(
-            "RGB 摄像头",
+            rgb_name,
             format!(
                 "运行时将按顺序尝试来源 {}；不可用的来源会被跳过",
-                config.cameras.rgb
+                system.rgb
             ),
         );
     } else if !rgb.is_empty() {
@@ -127,22 +145,22 @@ pub(super) fn check_cameras(report: &mut Report, config: Option<&Config>, config
                 if rgb == gaze_core::config::DEFAULT_RGB_CAMERA {
                     if detected > 0 {
                         report.pass(
-                            "RGB 摄像头",
+                            rgb_name,
                             format!("通过 PipeWire 可见 {detected} 个彩色摄像头"),
                         );
                     } else {
                         report.warning(
-                            "RGB 摄像头",
+                            rgb_name,
                             "PipeWire 未发现任何物理彩色摄像头",
                             "请检查摄像头隐私开关，并在本地桌面会话中运行 `gaze config`。",
                         );
                     }
                 } else if rgb.starts_with("pipewiresrc target-object=") {
                     if cameras.iter().any(|(_, target)| target == rgb) {
-                        report.pass("RGB 摄像头", "已配置的 PipeWire 来源可见");
+                        report.pass(rgb_name, "已配置的 PipeWire 来源可见");
                     } else {
                         report.error(
-                            "RGB 摄像头",
+                            rgb_name,
                             format!("已配置的来源不可见：{rgb}"),
                             detected_source_remedy(
                                 &cameras,
@@ -153,59 +171,59 @@ pub(super) fn check_cameras(report: &mut Report, config: Option<&Config>, config
                     }
                 } else if let Some((vid, pid)) = gaze_vision::camera::parse_usb_spec(rgb) {
                     report.pass(
-                        "RGB 摄像头",
+                        rgb_name,
                         format!("运行时解析 USB {vid:04x}:{pid:04x} 的彩色设备节点"),
                     );
                 } else if let Some(name) = gaze_vision::camera::parse_libcamera_spec(rgb) {
-                    check_libcamera_camera(report, "RGB 摄像头", "cameras.rgb", name);
+                    check_libcamera_camera(report, rgb_name, "cameras.rgb", name);
                 } else if rgb.starts_with("/dev/video") {
                     match fs::metadata(rgb) {
                         Ok(metadata) if metadata.file_type().is_char_device() => {
-                            report.pass("RGB 摄像头", format!("{rgb} 是字符设备"));
+                            report.pass(rgb_name, format!("{rgb} 是字符设备"));
                         }
                         Ok(_) => report.error(
-                            "RGB 摄像头",
+                            rgb_name,
                             format!("{rgb} 不是字符设备"),
                             "请将 cameras.rgb 指向某个 /dev/video* 节点。",
                         ),
                         Err(err) => report.error(
-                            "RGB 摄像头",
+                            rgb_name,
                             format!("{rgb} 无法访问：{err}"),
                             "请检查设备路径与权限。",
                         ),
                     }
                 } else {
                     report.warning(
-                        "RGB 摄像头",
+                        rgb_name,
                         "已配置自定义 GStreamer 来源，本次只读检查不会打开它",
                         "运行 `gaze test` 验证该自定义来源能否输出画面。",
                     );
                 }
             }
             Err(err) => report.error(
-                "RGB 摄像头",
+                rgb_name,
                 format!("GStreamer 摄像头枚举失败：{err}"),
                 "请确认已安装 GStreamer PipeWire 插件且 PipeWire 正在运行。",
             ),
         }
     }
 
-    let ir = config.cameras.ir.trim();
+    let ir = system.ir.trim();
     if ir.is_empty() {
         return;
     }
     if ir.starts_with("/dev/video") {
         match fs::metadata(ir) {
             Ok(metadata) if metadata.file_type().is_char_device() => {
-                check_ir_node(report, &config.cameras, ir, config_from_file);
+                check_ir_node(report, ir_name, system, ir, config_from_file);
             }
             Ok(_) => report.error(
-                "红外摄像头",
+                ir_name,
                 format!("{ir} 不是设备节点"),
                 "请选择红外摄像头对应的 /dev/video* 节点。",
             ),
             Err(err) => report.error(
-                "红外摄像头",
+                ir_name,
                 format!("无法访问 {ir}：{err}"),
                 "请修正 cameras.ir 或重新连接红外摄像头。",
             ),
@@ -213,54 +231,55 @@ pub(super) fn check_cameras(report: &mut Report, config: Option<&Config>, config
     } else if ir.starts_with("pipewiresrc target-object=") {
         match gaze_vision::camera::enumerate_ir_cameras() {
             Ok(cameras) if cameras.iter().any(|(_, target)| target == ir) => {
-                report.pass("红外摄像头", "已配置的 PipeWire 来源可见");
+                report.pass(ir_name, "已配置的 PipeWire 来源可见");
             }
             Ok(cameras) => report.error(
-                "红外摄像头",
+                ir_name,
                 format!("已配置的来源不可见：{ir}"),
                 detected_source_remedy(&cameras, "cameras.ir", None),
             ),
             Err(err) => report.error(
-                "红外摄像头",
+                ir_name,
                 format!("GStreamer 红外摄像头枚举失败：{err}"),
                 "请确认 PipeWire 正在运行且红外设备已连接。",
             ),
         }
     } else if let Some((vid, pid)) = gaze_vision::camera::parse_usb_spec(ir) {
         report.pass(
-            "红外摄像头",
+            ir_name,
             format!("运行时解析 USB {vid:04x}:{pid:04x} 的红外设备节点"),
         );
     } else if let Some(name) = gaze_vision::camera::parse_libcamera_spec(ir) {
-        check_libcamera_camera(report, "红外摄像头", "cameras.ir", name);
+        check_libcamera_camera(report, ir_name, "cameras.ir", name);
     } else {
         report.warning(
-            "红外摄像头",
+            ir_name,
             "已配置自定义 GStreamer 来源，本次只读检查不会打开它",
             "运行 `gaze test` 验证红外来源能否输出画面。",
         );
     }
 
-    if config.cameras.emitter_enabled {
+    if system.emitter_enabled {
         check_i2c_emitter(report, ir);
     }
 }
 
 fn check_ir_node(
     report: &mut Report,
+    ir_name: &'static str,
     cameras: &gaze_core::config::CameraConfig,
     node: &str,
     config_from_file: bool,
 ) {
     if gaze_vision::camera::is_physical_node(node) {
-        report.pass("红外摄像头", format!("{node} 是字符设备"));
+        report.pass(ir_name, format!("{node} 是字符设备"));
         return;
     }
     if !config_from_file {
         // The daemon's D-Bus config cannot carry the file-only provenance keys, so their
         // absence proves nothing when the config file itself was unreadable.
         report.warning(
-            "红外摄像头",
+            ir_name,
             format!("{node} 是虚拟设备，无法验证其桥接来源"),
             "The configuration file could not be read; run `sudo gaze doctor` to check \
              cameras.ir_source_marker.",
@@ -269,7 +288,7 @@ fn check_ir_node(
     }
     if let Err(err) = cameras.validate_ir_bridge_source() {
         report.error(
-            "红外摄像头",
+            ir_name,
             format!("{node} 是虚拟设备，其桥接来源无效：{err:#}"),
             "请修正配置文件中的 cameras.ir_source_marker 与 cameras.ir_source_driver。",
         );
@@ -277,7 +296,7 @@ fn check_ir_node(
     }
     let Some(bridge) = cameras.ir_bridge_source() else {
         report.error(
-            "红外摄像头",
+            ir_name,
             format!("{node} 是虚拟摄像头，认证流程不会打开它"),
             "If a privileged userspace bridge feeds this node, set cameras.ir_source_marker to \
              the root-owned marker file naming its physical /dev/video* source (optionally \
@@ -292,25 +311,31 @@ fn check_ir_node(
         // A root-owned 0600 marker satisfies the trust rules but cannot be
         // verified by an unprivileged doctor.
         report.warning(
-            "红外摄像头",
-            format!("当前用户无法读取桥接标记文件 {}", bridge.marker),
+            ir_name,
+            format!(
+                "当前用户无法读取桥接标记文件 {}",
+                bridge.marker
+            ),
             "运行 `sudo gaze doctor` 验证桥接来源。",
         );
         return;
     }
     match gaze_vision::camera::check_bridge_marker(node, &bridge) {
         Ok(_) if gaze_vision::camera::node_grants_untrusted_write(node) => report.error(
-            "红外摄像头",
+            ir_name,
             format!("{node} 可被非特权用户写入，认证流程会拒绝使用"),
             "Recorded footage could be replayed into the bridge node. Restrict its \
              permissions (drop the uaccess tag, root:video 0660).",
         ),
         Ok(source) => report.pass(
-            "红外摄像头",
-            format!("桥接标记 {} 指向物理来源 {source}", bridge.marker),
+            ir_name,
+            format!(
+                "桥接标记 {} 指向物理来源 {source}",
+                bridge.marker
+            ),
         ),
         Err(err) => report.error(
-            "红外摄像头",
+            ir_name,
             format!("{node} 的桥接来源校验失败：{err:#}"),
             "请确认桥接服务正在运行，并已写入配置的标记文件。",
         ),

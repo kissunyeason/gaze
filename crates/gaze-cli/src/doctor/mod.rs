@@ -12,9 +12,10 @@ use gaze_core::dbus::{
     dbus_is_unknown_method, try_benchmark_from_daemon,
 };
 use gaze_core::desktop::{
-    GDM_DCONF_PROFILE, GDM_FACE_OVERRIDE_PATH, KDE_FACE_PAM_FILE, KDE_SMARTCARD_PAM_FILE,
-    PLASMALOGIN_FACE_PAM_FILE, dconf_bool, gdm_face_auth_from_dconf, gdm_greeter_dconf_read,
-    gdm_greeter_dconf_source, kscreenlocker_starts_smartcard_slot,
+    GDM_DCONF_PROFILE, GDM_FACE_OVERRIDE_PATH, GDM_HOME_DIRS, KDE_FACE_PAM_FILE,
+    KDE_SMARTCARD_PAM_FILE, PLASMALOGIN_FACE_PAM_FILE, dconf_bool, dconf_read_with_profile,
+    gdm_face_auth_from_dconf, gdm_greeter_config_dirs, gdm_user_db_read,
+    kscreenlocker_starts_smartcard_slot,
 };
 use gaze_security::tpm::TPM_DEVICES;
 use std::collections::BTreeSet;
@@ -108,6 +109,7 @@ impl Level {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Output {
     Human,
+    Full,
     Json,
     Report,
 }
@@ -169,9 +171,30 @@ impl Report {
     }
 
     fn render(&self) -> String {
+        self.render_details(true)
+    }
+
+    fn render_details(&self, full: bool) -> String {
         let mut out = format!("\n{}\n\n", style("Gaze 体检").cyan().bold());
 
-        for check in &self.checks {
+        let errors = self.count(Level::Error);
+        let warnings = self.count(Level::Warning);
+        out.push_str(&format!("{errors} error(s), {warnings} warning(s).\n"));
+        if !full && errors == 0 && warnings == 0 {
+            out.push_str("No setup problems found.\n");
+        }
+        let mut checks: Vec<_> = self
+            .checks
+            .iter()
+            .filter(|check| full || matches!(check.level, Level::Error | Level::Warning))
+            .collect();
+        checks.sort_by_key(|check| match check.level {
+            Level::Error => 0,
+            Level::Warning => 1,
+            Level::Off => 2,
+            Level::Pass => 3,
+        });
+        for check in checks {
             let (symbol, label) = match check.level {
                 Level::Pass => (style("✓").green().bold(), style(check.name).bold()),
                 Level::Off => (style("○").dim().bold(), style(check.name).dim().bold()),
@@ -199,11 +222,17 @@ impl Report {
             if warnings == 1 { "" } else { "s" },
             if errors == 1 { "" } else { "s" }
         ));
-        if off > 0 {
+        if full && off > 0 {
             out.push_str(&format!(
                 "{}\n",
-                style("○ 表示功能本身正常，但你已将其关闭；其下方一行是开启方法。").dim()
+                style("○ 表示功能本身正常，但你已将其关闭；其下方一行是开启方法。")
+                    .dim()
             ));
+        }
+        if !full {
+            out.push_str(
+                "Run gaze doctor --verbose for every check, including optional features.\n",
+            );
         }
         out.push('\n');
         out
@@ -242,6 +271,11 @@ impl Report {
 
 pub async fn run(username: &str, benchmark: bool, output: Output) -> anyhow::Result<bool> {
     let mut report = Report::default();
+    if matches!(output, Output::Human | Output::Full | Output::Report) {
+        eprintln!(
+            "Checking Gaze, cameras, and desktop integration… (daemon readiness may take 25 seconds)"
+        );
+    }
 
     check_platform(&mut report);
     check_systemd(&mut report);
@@ -287,7 +321,8 @@ pub async fn run(username: &str, benchmark: bool, output: Output) -> anyhow::Res
     .await;
 
     match output {
-        Output::Human => report.print()?,
+        Output::Human => Term::stdout().write_str(&report.render_details(false))?,
+        Output::Full => report.print()?,
         Output::Json => println!("{}", report.to_json()),
         Output::Report => {
             report.print()?;
@@ -327,7 +362,10 @@ fn check_platform(report: &mut Report) {
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     report.pass(
         "CPU",
-        format!("{} 不需要 x86 AVX2 检查", std::env::consts::ARCH),
+        format!(
+            "{} 不需要 x86 AVX2 检查",
+            std::env::consts::ARCH
+        ),
     );
 }
 
@@ -359,6 +397,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn concise_report_leads_with_problems_and_hides_optional_setup() {
+        let mut report = Report::default();
+        report.pass("CPU", "ready");
+        report.off("Wallet", "off", "optional enrollment command");
+        report.warning("摄像头", "busy", "Close other camera apps");
+        report.error("Service", "failed", "Restart it");
+        let concise = report.render_details(false);
+        assert!(concise.find("Service").unwrap() < concise.find("摄像头").unwrap());
+        assert!(!concise.contains("optional enrollment command"));
+        assert!(!concise.contains("CPU:"));
+        assert!(
+            report
+                .render_details(true)
+                .contains("optional enrollment command")
+        );
+        assert!(concise.contains("--verbose"));
+    }
+
+    #[test]
     fn the_privileged_file_list_covers_every_route_to_root() {
         for needle in [
             "systemd/system/gazed.service",
@@ -375,7 +432,11 @@ mod tests {
     #[test]
     fn a_feature_switched_off_is_not_a_checkmark_and_still_says_how_to_turn_it_on() {
         let mut report = Report::default();
-        report.off("GDM 登录人脸认证", "off", "Turn it on: flip the switch.");
+        report.off(
+            "GDM 登录人脸认证",
+            "off",
+            "Turn it on: flip the switch.",
+        );
 
         let check = &report.checks[0];
         assert_eq!(check.level, Level::Off);

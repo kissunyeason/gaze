@@ -29,7 +29,10 @@ pub const PARALLEL_CAPTURE_LABELS: [&str; 3] = [
     "总是（同时采集 RGB 与红外）",
 ];
 pub const START_DELAY_SCOPE_OPTIONS: [&str; 2] = ["all", "screen_lock"];
-pub const START_DELAY_SCOPE_LABELS: [&str; 2] = ["所有人脸认证（含 sudo）", "仅屏幕锁定"];
+pub const START_DELAY_SCOPE_LABELS: [&str; 2] = [
+    "所有人脸认证（含 sudo）",
+    "仅屏幕锁定",
+];
 // Clients validate syntax independently of the daemon's installed vendor runtime.
 pub const INFERENCE_EXECUTION_PROVIDER_OPTIONS: [&str; 4] = ["cpu", "auto", "openvino", "vitis"];
 pub const INFERENCE_EXECUTION_PROVIDER_LABELS: [&str; 4] =
@@ -57,6 +60,8 @@ pub const MAX_DURESS_CLOSED_THRESHOLD: f64 = 0.99;
 pub const DEFAULT_DURESS_HOLD_MS: u64 = 600;
 pub const MAX_DURESS_HOLD_MS: u64 = 5000;
 pub const MAX_IR_FRAME_DIMENSION: u32 = 4096;
+pub const MAX_CAMERA_FALLBACKS: usize = 3;
+pub const CAMERA_FALLBACK_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const DEFAULT_CONFIG_MODE: u32 = 0o644;
 
 pub fn index_of(options: &[&str], value: &str, fallback: u32) -> u32 {
@@ -462,6 +467,10 @@ pub struct CameraConfig {
     #[serde(default = "default_rgb_device")]
     pub rgb: CameraSources,
     #[serde(default)]
+    pub allow_nonphysical_rgb: bool,
+    #[serde(default)]
+    pub allow_untrusted_rgb_writers: bool,
+    #[serde(default)]
     pub ir: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ir_frame_width: Option<u32>,
@@ -479,6 +488,39 @@ pub struct CameraConfig {
     pub parallel_capture: String,
     #[serde(default = "default_true")]
     pub auto_rotate: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback: Vec<CameraSystem>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct CameraSystem {
+    #[serde(
+        default = "no_camera_sources",
+        skip_serializing_if = "CameraSources::is_empty"
+    )]
+    pub rgb: CameraSources,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub ir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ir_frame_width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ir_frame_height: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub emitter_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ir_source_marker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ir_source_driver: Option<String>,
+}
+
+impl CameraSystem {
+    pub fn is_empty(&self) -> bool {
+        self.rgb.is_empty() && self.ir.trim().is_empty()
+    }
+}
+
+fn no_camera_sources() -> CameraSources {
+    CameraSources::Ordered(Vec::new())
 }
 
 /// Provenance an operator declares for a virtual IR capture node that a
@@ -492,6 +534,12 @@ pub struct BridgeSource<'a> {
     pub marker: &'a str,
     /// Driver the source node must be bound to, when pinned.
     pub source_driver: Option<&'a str>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NonphysicalRgbOptIn {
+    pub enabled: bool,
+    pub allow_untrusted_writers: bool,
 }
 
 fn default_rgb_device() -> CameraSources {
@@ -520,11 +568,16 @@ impl CameraConfig {
             );
         }
         self.validate_ir_bridge_source()?;
+        if self.allow_untrusted_rgb_writers && !self.allow_nonphysical_rgb {
+            anyhow::bail!(
+                "cameras.allow_untrusted_rgb_writers requires cameras.allow_nonphysical_rgb"
+            );
+        }
         match (self.ir_frame_width, self.ir_frame_height) {
             (None, None) => {}
-            (Some(_), None) | (None, Some(_)) => {
-                anyhow::bail!("cameras.ir_frame_width 与 cameras.ir_frame_height 必须同时设置")
-            }
+            (Some(_), None) | (None, Some(_)) => anyhow::bail!(
+                "cameras.ir_frame_width 与 cameras.ir_frame_height 必须同时设置"
+            ),
             (Some(width), Some(height)) => {
                 if !ir_frame_dimension_valid(width) || !ir_frame_dimension_valid(height) {
                     anyhow::bail!(
@@ -534,7 +587,65 @@ impl CameraConfig {
                 }
             }
         }
+        if self.fallback.len() > MAX_CAMERA_FALLBACKS {
+            anyhow::bail!(
+                "cameras.fallback lists {} camera systems; at most {MAX_CAMERA_FALLBACKS} are tried",
+                self.fallback.len()
+            );
+        }
+        for (index, system) in self.fallback.iter().enumerate() {
+            if system.is_empty() {
+                anyhow::bail!(
+                    "cameras.fallback entry {} sets neither rgb nor ir",
+                    index + 1
+                );
+            }
+        }
+        for (index, system) in self.systems().iter().enumerate().skip(1) {
+            system
+                .validate()
+                .with_context(|| format!("in cameras.fallback entry {index}"))?;
+        }
         Ok(())
+    }
+
+    pub fn systems(&self) -> Vec<CameraConfig> {
+        let primary = CameraConfig {
+            fallback: Vec::new(),
+            ..self.clone()
+        };
+        let fallbacks = self
+            .fallback
+            .iter()
+            .filter(|system| !system.is_empty())
+            .take(MAX_CAMERA_FALLBACKS)
+            .map(|system| CameraConfig {
+                rgb: system.rgb.clone(),
+                ir: system.ir.clone(),
+                ir_frame_width: system.ir_frame_width,
+                ir_frame_height: system.ir_frame_height,
+                emitter_enabled: system.emitter_enabled,
+                ir_source_marker: system.ir_source_marker.clone(),
+                ir_source_driver: system.ir_source_driver.clone(),
+                ..primary.clone()
+            })
+            .collect::<Vec<_>>();
+        std::iter::once(primary).chain(fallbacks).collect()
+    }
+
+    pub fn has_ir(&self) -> bool {
+        self.systems()
+            .iter()
+            .any(|system| !system.ir.trim().is_empty())
+    }
+
+    pub fn fallback_budget(&self) -> std::time::Duration {
+        let fallbacks = self.systems().len().saturating_sub(1) as u32;
+        CAMERA_FALLBACK_BUDGET * fallbacks
+    }
+
+    pub fn inherit_fallback(&mut self, current: &CameraConfig) {
+        self.fallback = current.fallback.clone();
     }
 
     pub fn ir_frame_size(&self) -> Option<(u32, u32)> {
@@ -570,12 +681,26 @@ impl CameraConfig {
         })
     }
 
+    /// Loading only warns on an invalid pair, so the writer key is masked here.
+    pub fn nonphysical_rgb_opt_in(&self) -> NonphysicalRgbOptIn {
+        NonphysicalRgbOptIn {
+            enabled: self.allow_nonphysical_rgb,
+            allow_untrusted_writers: self.allow_untrusted_rgb_writers && self.allow_nonphysical_rgb,
+        }
+    }
+
     /// Copies the file-only bridge provenance keys from `current`. D-Bus config
     /// updates cannot carry them; without this a GUI save would clear them.
     pub fn inherit_ir_bridge_source(&mut self, current: &CameraConfig) {
         let valid = current.validate_ir_bridge_source().is_ok();
         self.ir_source_marker = current.ir_source_marker.clone().filter(|_| valid);
         self.ir_source_driver = current.ir_source_driver.clone().filter(|_| valid);
+    }
+
+    pub fn inherit_nonphysical_rgb(&mut self, current: &CameraConfig) {
+        let opt_in = current.nonphysical_rgb_opt_in();
+        self.allow_nonphysical_rgb = opt_in.enabled;
+        self.allow_untrusted_rgb_writers = opt_in.allow_untrusted_writers;
     }
 
     pub fn set_ir_frame_size(&mut self, size: Option<(u32, u32)>) {
@@ -651,6 +776,7 @@ pub struct AuthConfig {
     pub abort_before_first_resume: bool,
     pub require_confirmation_lock_screen: bool,
     pub require_confirmation_elevation: bool,
+    pub require_attention: bool,
     pub resume_grace_ms: u64,
     pub start_delay_ms: u64,
     pub start_delay_scope: String,
@@ -670,6 +796,8 @@ struct AuthConfigFile {
     require_confirmation_lock_screen: Option<bool>,
     #[serde(default)]
     require_confirmation_elevation: Option<bool>,
+    #[serde(default = "default_false")]
+    require_attention: bool,
     #[serde(default = "default_resume_grace_ms")]
     resume_grace_ms: u64,
     #[serde(default = "default_start_delay_ms")]
@@ -694,6 +822,7 @@ impl<'de> Deserialize<'de> for AuthConfig {
                 .require_confirmation_lock_screen
                 .unwrap_or(legacy),
             require_confirmation_elevation: file.require_confirmation_elevation.unwrap_or(legacy),
+            require_attention: file.require_attention,
             resume_grace_ms: file.resume_grace_ms,
             start_delay_ms: file.start_delay_ms,
             start_delay_scope: file.start_delay_scope,
@@ -840,6 +969,7 @@ impl Default for AuthConfig {
             abort_before_first_resume: false,
             require_confirmation_lock_screen: false,
             require_confirmation_elevation: false,
+            require_attention: false,
             resume_grace_ms: default_resume_grace_ms(),
             start_delay_ms: default_start_delay_ms(),
             start_delay_scope: default_start_delay_scope(),
@@ -851,6 +981,8 @@ impl Default for CameraConfig {
     fn default() -> Self {
         Self {
             rgb: default_rgb_device(),
+            allow_nonphysical_rgb: false,
+            allow_untrusted_rgb_writers: false,
             ir: String::new(),
             emitter_enabled: false,
             dark_luma_threshold: default_dark_luma_threshold(),
@@ -860,22 +992,27 @@ impl Default for CameraConfig {
             ir_source_marker: None,
             ir_source_driver: None,
             auto_rotate: true,
+            fallback: Vec::new(),
         }
     }
 }
 
-const OPTIONAL_CONFIG_KEYS: [(&str, &str); 4] = [
+const OPTIONAL_CONFIG_KEYS: [(&str, &str); 5] = [
     ("cameras", "ir_frame_width"),
     ("cameras", "ir_frame_height"),
     ("cameras", "ir_source_marker"),
     ("cameras", "ir_source_driver"),
+    ("cameras", "fallback"),
 ];
 
-const FILE_ONLY_CONFIG_KEYS: [&str; 4] = [
+const FILE_ONLY_CONFIG_KEYS: [&str; 7] = [
     "liveness.ir_model",
     "liveness.ir_threshold",
+    "cameras.allow_nonphysical_rgb",
+    "cameras.allow_untrusted_rgb_writers",
     "cameras.ir_source_marker",
     "cameras.ir_source_driver",
+    "cameras.fallback",
 ];
 const FILE_ONLY_CONFIG_SECTIONS: [&str; 1] = ["duress"];
 
@@ -1052,7 +1189,9 @@ impl Config {
         }
         let value = item.as_value().filter(|_| !item.is_table_like());
         let Some(value) = value else {
-            anyhow::bail!("`{key}` 是一个配置段；请指定其中的具体设置，例如 `{key}.<name>`");
+            anyhow::bail!(
+                "`{key}` 是一个配置段；请指定其中的具体设置，例如 `{key}.<name>`"
+            );
         };
         Ok(match value.as_str() {
             Some(text) => text.to_string(),
@@ -1249,6 +1388,16 @@ impl Config {
 
 fn merge_table_like(target: &mut toml_edit::Table, key: &str, val: &toml_edit::Value) -> bool {
     match val {
+        toml_edit::Value::Array(entries)
+            if !entries.is_empty() && entries.iter().all(toml_edit::Value::is_inline_table) =>
+        {
+            let tables = entries
+                .iter()
+                .filter_map(toml_edit::Value::as_inline_table)
+                .map(|entry| entry.clone().into_table())
+                .collect::<Vec<_>>();
+            return merge_array_of_tables(target, key, &tables);
+        }
         toml_edit::Value::InlineTable(sub_inline) => {
             if !target.contains_key(key) {
                 target.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
@@ -1276,9 +1425,53 @@ fn merge_table_like(target: &mut toml_edit::Table, key: &str, val: &toml_edit::V
     true
 }
 
+fn merge_array_of_tables(
+    target: &mut toml_edit::Table,
+    key: &str,
+    desired: &[toml_edit::Table],
+) -> bool {
+    if !target
+        .get(key)
+        .is_some_and(toml_edit::Item::is_array_of_tables)
+    {
+        target.insert(
+            key,
+            toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+        );
+    }
+    let Some(tables) = target
+        .get_mut(key)
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+    else {
+        return false;
+    };
+    while tables.len() > desired.len() {
+        tables.remove(tables.len() - 1);
+    }
+    for (index, entry) in desired.iter().enumerate() {
+        if index == tables.len() {
+            tables.push(toml_edit::Table::new());
+        }
+        let Some(table) = tables.get_mut(index) else {
+            return false;
+        };
+        table.retain(|existing, _| entry.contains_key(existing));
+        if !merge_into_toml_table(table, entry) {
+            return false;
+        }
+    }
+    true
+}
+
 fn merge_into_toml_table(target: &mut toml_edit::Table, desired: &toml_edit::Table) -> bool {
     for (key, value) in desired.iter() {
         match value {
+            toml_edit::Item::ArrayOfTables(entries) => {
+                let tables = entries.iter().cloned().collect::<Vec<_>>();
+                if !merge_array_of_tables(target, key, &tables) {
+                    return false;
+                }
+            }
             toml_edit::Item::Table(sub_table) => {
                 if !target.contains_key(key) {
                     target.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
@@ -1390,6 +1583,156 @@ mod tests {
         );
     }
 
+    const SURFACE_CAMERAS: &str = "[cameras]\n\
+        rgb = \"usb:045e:0990\"\n\
+        ir = \"/dev/video2\"\n\
+        emitter_enabled = true\n\
+        dark_luma_threshold = 40\n\
+        ir_frame_width = 340\n\
+        ir_frame_height = 340\n\
+        \n\
+        # rear cameras when the screen is flipped\n\
+        [[cameras.fallback]]\n\
+        rgb = \"usb:045e:0991\" # rear\n\
+        ir = \"/dev/video6\"\n";
+
+    #[test]
+    fn fallback_systems_follow_the_primary_and_share_only_the_common_keys() {
+        let config: Config = toml_edit::de::from_str(SURFACE_CAMERAS).unwrap();
+        config.cameras.validate().unwrap();
+        let systems = config.cameras.systems();
+        assert_eq!(systems.len(), 2);
+        assert!(systems.iter().all(|system| system.fallback.is_empty()));
+
+        assert_eq!(systems[0].rgb, "usb:045e:0990".into());
+        assert_eq!(systems[0].ir, "/dev/video2");
+        assert!(systems[0].emitter_enabled);
+        assert_eq!(systems[0].ir_frame_size(), Some((340, 340)));
+
+        assert_eq!(systems[1].rgb, "usb:045e:0991".into());
+        assert_eq!(systems[1].ir, "/dev/video6");
+        assert!(!systems[1].emitter_enabled);
+        assert_eq!(systems[1].ir_frame_size(), None);
+        assert_eq!(systems[1].dark_luma_threshold, 40);
+        assert_eq!(config.cameras.fallback_budget(), CAMERA_FALLBACK_BUDGET);
+        assert!(unknown_config_keys(SURFACE_CAMERAS).is_empty());
+    }
+
+    #[test]
+    fn a_fallback_entry_does_not_borrow_the_primary_cameras() {
+        let config: Config = toml_edit::de::from_str(
+            "[cameras]\nir = \"/dev/video2\"\n[[cameras.fallback]]\nir = \"/dev/video6\"\n",
+        )
+        .unwrap();
+        let systems = config.cameras.systems();
+        assert_eq!(systems[0].rgb, DEFAULT_RGB_CAMERA.into());
+        assert!(systems[1].rgb.is_empty());
+
+        let ir_only_primary = CameraConfig {
+            rgb: "".into(),
+            fallback: vec![CameraSystem {
+                rgb: "primary".into(),
+                ir: "/dev/video6".into(),
+                ir_frame_width: None,
+                ir_frame_height: None,
+                emitter_enabled: false,
+                ir_source_marker: None,
+                ir_source_driver: None,
+            }],
+            ..CameraConfig::default()
+        };
+        assert!(ir_only_primary.has_ir());
+        assert!(!CameraConfig::default().has_ir());
+    }
+
+    #[test]
+    fn invalid_fallback_entries_are_rejected_and_skipped() {
+        let empty = CameraSystem {
+            rgb: "".into(),
+            ir: " ".into(),
+            ir_frame_width: None,
+            ir_frame_height: None,
+            emitter_enabled: false,
+            ir_source_marker: None,
+            ir_source_driver: None,
+        };
+        let usable = CameraSystem {
+            ir: "/dev/video6".into(),
+            ..empty.clone()
+        };
+
+        let cameras = CameraConfig {
+            fallback: vec![empty.clone(), usable.clone()],
+            ..CameraConfig::default()
+        };
+        assert!(cameras.validate().is_err());
+        assert_eq!(cameras.systems().len(), 2);
+
+        let half_size = CameraConfig {
+            fallback: vec![CameraSystem {
+                ir_frame_width: Some(340),
+                ..usable.clone()
+            }],
+            ..CameraConfig::default()
+        };
+        assert!(half_size.validate().is_err());
+
+        let too_many = CameraConfig {
+            fallback: vec![usable; MAX_CAMERA_FALLBACKS + 1],
+            ..CameraConfig::default()
+        };
+        assert!(too_many.validate().is_err());
+        assert_eq!(too_many.systems().len(), MAX_CAMERA_FALLBACKS + 1);
+        assert_eq!(
+            too_many.fallback_budget(),
+            CAMERA_FALLBACK_BUDGET * MAX_CAMERA_FALLBACKS as u32
+        );
+    }
+
+    #[test]
+    fn fallback_systems_are_file_only_and_survive_a_dbus_save() {
+        let config: Config = toml_edit::de::from_str(SURFACE_CAMERAS).unwrap();
+        assert!(config.with_key("cameras.fallback", "[]").is_err());
+
+        let mut requested = CameraConfig::default();
+        requested.inherit_fallback(&config.cameras);
+        assert_eq!(requested.fallback, config.cameras.fallback);
+    }
+
+    #[test]
+    fn saving_keeps_fallback_tables_and_their_comments() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        std::fs::write(&path, SURFACE_CAMERAS).unwrap();
+
+        let mut config = Config::load_from(path.to_str().unwrap()).unwrap();
+        config.cameras.dark_luma_threshold = 25;
+        config.cameras.fallback[0].emitter_enabled = true;
+        config.save_to(path.to_str().unwrap()).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("[[cameras.fallback]]"), "{saved}");
+        assert!(
+            saved.contains("# rear cameras when the screen is flipped"),
+            "{saved}"
+        );
+        assert!(saved.contains("# rear"), "{saved}");
+        let loaded = Config::load_from(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.cameras.fallback, config.cameras.fallback);
+        assert_eq!(loaded.cameras.dark_luma_threshold, 25);
+
+        config.cameras.fallback.clear();
+        config.save_to(path.to_str().unwrap()).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("fallback"), "{saved}");
+        assert!(
+            Config::load_from(path.to_str().unwrap())
+                .unwrap()
+                .cameras
+                .fallback
+                .is_empty()
+        );
+    }
+
     #[test]
     fn config_keys_round_trip_through_get_and_set() {
         let config = Config::default();
@@ -1418,6 +1761,16 @@ mod tests {
         assert!(config.to_toml().unwrap().contains("[duress]"));
         assert!(config.with_key("liveness.ir_model", "true").is_err());
         assert!(config.with_key("liveness.ir_threshold", "0.6").is_err());
+        assert!(
+            config
+                .with_key("cameras.allow_nonphysical_rgb", "true")
+                .is_err()
+        );
+        assert!(
+            config
+                .with_key("cameras.allow_untrusted_rgb_writers", "true")
+                .is_err()
+        );
         for (key, value) in [
             ("duress.enabled", "true"),
             ("duress.closed_threshold", "0.8"),
@@ -1533,6 +1886,26 @@ mod tests {
             cameras.validate().unwrap();
             assert_eq!(cameras.parallel_capture(), mode);
         }
+    }
+
+    #[test]
+    fn untrusted_rgb_writers_requires_the_nonphysical_opt_in() {
+        let mut cameras = CameraConfig {
+            allow_untrusted_rgb_writers: true,
+            ..CameraConfig::default()
+        };
+        assert!(cameras.validate().is_err());
+        assert!(!cameras.nonphysical_rgb_opt_in().allow_untrusted_writers);
+
+        cameras.allow_nonphysical_rgb = true;
+        cameras.validate().unwrap();
+        assert_eq!(
+            cameras.nonphysical_rgb_opt_in(),
+            NonphysicalRgbOptIn {
+                enabled: true,
+                allow_untrusted_writers: true,
+            }
+        );
     }
 
     #[test]
@@ -2002,6 +2375,8 @@ mod tests {
             security: SecurityLevel::high(),
             cameras: CameraConfig {
                 rgb: "primary".into(),
+                allow_nonphysical_rgb: true,
+                allow_untrusted_rgb_writers: true,
                 ir: "pipewiresrc target-object=some-ir-camera".to_string(),
                 emitter_enabled: true,
                 dark_luma_threshold: 55,
@@ -2011,6 +2386,15 @@ mod tests {
                 ir_frame_height: Some(340),
                 ir_source_marker: Some("/run/surface_ir_bridge_dev".to_string()),
                 ir_source_driver: None,
+                fallback: vec![CameraSystem {
+                    rgb: "usb:045e:0991".into(),
+                    ir: "/dev/video6".to_string(),
+                    ir_frame_width: None,
+                    ir_frame_height: None,
+                    emitter_enabled: true,
+                    ir_source_marker: None,
+                    ir_source_driver: None,
+                }],
             },
             auth: AuthConfig {
                 abort_if_ssh: true,
@@ -2018,6 +2402,7 @@ mod tests {
                 abort_before_first_resume: true,
                 require_confirmation_lock_screen: true,
                 require_confirmation_elevation: true,
+                require_attention: false,
                 resume_grace_ms: 3000,
                 start_delay_ms: 1500,
                 start_delay_scope: "screen_lock".to_string(),
@@ -2056,6 +2441,8 @@ mod tests {
             SecurityLevel::high().recognizer()
         );
         assert_eq!(loaded.cameras.rgb, "primary".into());
+        assert!(loaded.cameras.allow_nonphysical_rgb);
+        assert!(loaded.cameras.allow_untrusted_rgb_writers);
         assert_eq!(
             loaded.cameras.ir,
             "pipewiresrc target-object=some-ir-camera"
@@ -2065,6 +2452,7 @@ mod tests {
         assert_eq!(loaded.cameras.parallel_capture(), "auto");
         assert_eq!(loaded.cameras.ir_frame_size(), Some((340, 340)));
         assert!(!loaded.cameras.auto_rotate);
+        assert_eq!(loaded.cameras.fallback, config.cameras.fallback);
         assert!(loaded.auth.abort_if_ssh);
         assert!(!loaded.auth.abort_if_lid_closed);
         assert!(loaded.auth.abort_before_first_resume);
@@ -2188,6 +2576,7 @@ mod tests {
         assert!(!config.auth.abort_before_first_resume);
         assert!(!config.auth.require_confirmation_lock_screen);
         assert!(!config.auth.require_confirmation_elevation);
+        assert!(!config.auth.require_attention);
         assert_eq!(config.auth.start_delay_ms, 0);
         assert_eq!(config.enrollment.max_templates, 2);
         assert_eq!(
@@ -2702,6 +3091,28 @@ level = "low""#,
 
         assert_eq!(requested.ir_source_marker, current.ir_source_marker);
         assert_eq!(requested.ir_source_driver, current.ir_source_driver);
+    }
+
+    #[test]
+    fn inherit_nonphysical_rgb_drops_an_invalid_pair() {
+        let invalid = CameraConfig {
+            allow_untrusted_rgb_writers: true,
+            ..CameraConfig::default()
+        };
+        let mut requested = CameraConfig::default();
+        requested.inherit_nonphysical_rgb(&invalid);
+        requested.validate().unwrap();
+        assert!(!requested.allow_nonphysical_rgb);
+        assert!(!requested.allow_untrusted_rgb_writers);
+
+        let valid = CameraConfig {
+            allow_nonphysical_rgb: true,
+            allow_untrusted_rgb_writers: true,
+            ..CameraConfig::default()
+        };
+        requested.inherit_nonphysical_rgb(&valid);
+        assert!(requested.allow_nonphysical_rgb);
+        assert!(requested.allow_untrusted_rgb_writers);
     }
 
     #[test]

@@ -24,7 +24,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   JUST_VERSION: 1.59.0
-  NFPM_VERSION: v2.48.0
+  NFPM_VERSION: v2.49.0
 
 jobs:
   build-native:
@@ -473,6 +473,7 @@ jobs:
             git \
             ca-certificates \
             curl \
+            unzip \
             tar \
             gzip \
             zstd \
@@ -491,7 +492,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Install just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
@@ -514,7 +515,7 @@ jobs:
         run: |
           set -euo pipefail
           ref="${DEPLOY_REF_NAME#v}"
-          # RPM 的 Version 字段禁止 '-'：把中文版序号挪到 Release（如 0.5.1-cn.3 → 0.5.1 + 1.cn3）
+          # RPM 的 Version 字段禁止 '-'：把中文版序号挪到 Release（如 0.5.1-cn.5 → 0.5.1 + 1.cn5）
           if [[ "$ref" == *-cn.* ]]; then
             version="${ref%%-cn.*}"
             cn="${ref##*-cn.}"
@@ -536,9 +537,10 @@ jobs:
 
   dispatch-packages:
     name: Dispatch packages to self-hosted repo
-    # 本仓库是汉化分支：上游 CD 依赖自建源与签名密钥，这里直接跳过。
-    if: github.repository == 'GunduLabs/gaze'
     runs-on: ubuntu-latest
+    # 本仓库是汉化分支：上游 dispatch 依赖官方自建源，这里直接跳过。
+    if: github.repository == 'GunduLabs/gaze'
+
     permissions: {}
     needs: [package-native, build-flatpak, build-srpm]
 

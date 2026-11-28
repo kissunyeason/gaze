@@ -20,7 +20,7 @@ you can leave the GNOME extension disabled.
 >
 > GNOME's prompts normally won't let you confirm with an empty password field. When Gaze asks for confirmation, the extension hides that field and focuses the **Authenticate** button in PolKit. On the lock screen and GDM login screen, it adds a **Confirm Face Unlock** button.
 >
-> If the extension is **inactive/disabled** under GNOME while either toggle is set, Gaze's PAM modules will **safely bypass confirmation** (returning success instantly upon face match) to prevent empty input hangs and user lockouts.
+> If the extension is **inactive/disabled** while either toggle is set, confirmation remains required. The extension provides the graphical confirmation controls for GNOME prompts and lock screens. Without it, graphical confirmation may not complete, so use the password prompt or turn off the corresponding confirmation setting in `/etc/gaze/config.toml` and restart `gazed` if you do not want confirmation.
 
 ## Should I enable it?
 
@@ -249,7 +249,9 @@ sudo rm -f /var/lib/gdm/seat0/config/dconf/user
 
 GDM writes the file again with its own defaults. On Debian and Ubuntu the path is
 under `/var/lib/gdm3`, and a machine with more than one seat has one directory per
-seat. `gaze doctor` reports this and names the file for you.
+seat. `sudo gaze doctor` reports this and names the file for you, whether Gaze or
+something else turned face login on. Without `sudo` it cannot open GDM's database on
+distributions such as Fedora and says so instead.
 
 ## Verify GNOME flow
 

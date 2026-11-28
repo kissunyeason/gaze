@@ -63,7 +63,10 @@ pub(super) fn check_config(report: &mut Report) -> Option<Config> {
                 .map(|contents| unknown_config_keys(&contents))
                 .unwrap_or_default();
             if unknown.is_empty() {
-                report.pass("配置", format!("{CONFIG_PATH} 解析成功"));
+                report.pass(
+                    "配置",
+                    format!("{CONFIG_PATH} 解析成功"),
+                );
             } else {
                 report.warning(
                     "配置",
@@ -167,10 +170,12 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
         );
     }
     if let Err(err) = config.cameras.validate() {
-        error(
-            err.to_string(),
-            "cameras.parallel_capture 请使用 never、auto 或 always。",
-        );
+        let fix = if format!("{err:#}").contains("cameras.fallback") {
+            "Give each [[cameras.fallback]] entry its own rgb or ir camera, with at most three entries."
+        } else {
+            "cameras.parallel_capture 请使用 never、auto 或 always。"
+        };
+        error(format!("{err:#}"), fix);
     }
     if let Err(err) = config.inference.validate() {
         let fix = "请在 [inference] 中使用 cpu/cpu、auto/npu、openvino/cpu、openvino/gpu、openvino/npu 或 vitis/npu。";
@@ -185,7 +190,8 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
             "请将 cameras.rgb 设为 \\\"primary\\\" 或配置红外摄像头。",
         );
     }
-    for rgb in rgb.iter() {
+    let systems = config.cameras.systems();
+    for rgb in systems.iter().flat_map(|system| system.rgb.iter()) {
         if let Some(index) = rgb.strip_prefix("/dev/video") {
             if index.is_empty() || !index.chars().all(|c| c.is_ascii_digit()) {
                 error(
@@ -252,7 +258,8 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
         findings.push(Check {
             level: Level::Pass,
             name: "配置项取值",
-            message: "摄像头、安全、录入、推理与活体检测配置均有效".to_string(),
+            message: "摄像头、安全、录入、推理与活体检测配置均有效"
+                .to_string(),
             fix: None,
         });
     }
@@ -265,7 +272,20 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
             fix: Some("请配置 cameras.ir，或关闭 emitter_enabled。".to_string()),
         });
     }
-    if config.cameras.parallel_capture() == "always" && !ir.is_empty() {
+    for (index, system) in config.cameras.fallback.iter().enumerate() {
+        if system.emitter_enabled && system.ir.trim().is_empty() {
+            findings.push(Check {
+                level: Level::Warning,
+                name: "红外补光",
+                message: format!(
+                    "cameras.fallback entry {} sets emitter_enabled but no ir camera",
+                    index + 1
+                ),
+                fix: Some("Set ir in that entry or disable its emitter_enabled.".to_string()),
+            });
+        }
+    }
+    if config.cameras.parallel_capture() == "always" && config.cameras.has_ir() {
         findings.push(Check {
             level: Level::Warning,
             name: "并行采集",
@@ -279,26 +299,54 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
             ),
         });
     }
+    let opt_in = config.cameras.nonphysical_rgb_opt_in();
+    if opt_in.allow_untrusted_writers {
+        findings.push(Check {
+            level: Level::Warning,
+            name: "RGB camera trust",
+            message: "cameras.allow_untrusted_rgb_writers is true, so any process that can write \
+                      the RGB node can pass face authentication"
+                .to_string(),
+            fix: Some(
+                "Remove it and restrict the node to root, or use a physical RGB camera."
+                    .to_string(),
+            ),
+        });
+    } else if opt_in.enabled {
+        findings.push(Check {
+            level: Level::Warning,
+            name: "RGB camera trust",
+            message: "cameras.allow_nonphysical_rgb is true, so a virtual RGB node is trusted for \
+                      authentication"
+                .to_string(),
+            fix: Some("Prefer usb:VVVV:PPPP or a physical /dev/videoN where possible.".to_string()),
+        });
+    }
     if !config.liveness.enabled {
         findings.push(Check {
             level: Level::Warning,
             name: "活体检测",
             message: "活体防欺骗已关闭".to_string(),
-            fix: Some("除非你明确接受照片或屏幕欺骗的风险，否则请启用 [liveness]。".to_string()),
+            fix: Some(
+                "除非你明确接受照片或屏幕欺骗的风险，否则请启用 [liveness]。"
+                    .to_string(),
+            ),
         });
     }
     if config.liveness.ir_model && !config.liveness.enabled {
         findings.push(Check {
             level: Level::Warning,
             name: "红外防欺骗模型",
-            message: "liveness.ir_model 为 true，但活体检测已关闭，因此不会生效".to_string(),
+            message: "liveness.ir_model 为 true，但活体检测已关闭，因此不会生效"
+                .to_string(),
             fix: Some("请启用 [liveness] 或移除 ir_model。".to_string()),
         });
-    } else if config.liveness.ir_model && ir.is_empty() {
+    } else if config.liveness.ir_model && !config.cameras.has_ir() {
         findings.push(Check {
             level: Level::Warning,
             name: "红外防欺骗模型",
-            message: "liveness.ir_model 为 true，但 cameras.ir 为空，因此不会生效".to_string(),
+            message: "liveness.ir_model 为 true，但 cameras.ir 为空，因此不会生效"
+                .to_string(),
             fix: Some("请配置 cameras.ir 或移除 ir_model。".to_string()),
         });
     }
@@ -307,7 +355,9 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
             level: Level::Warning,
             name: "录入上限",
             message: "max_templates 为 0，模板淘汰会被禁用".to_string(),
-            fix: Some("请将 enrollment.max_templates 设为正数（默认 2）。".into()),
+            fix: Some(
+                "请将 enrollment.max_templates 设为正数（默认 2）。".into(),
+            ),
         });
     }
 
@@ -335,14 +385,20 @@ mod tests {
                 && check.message.contains("liveness.ir_threshold"))
         );
         assert!(
-            findings.iter().any(|check| check.name == "红外防欺骗模型"
-                && check.message.contains("cameras.ir"))
+            findings
+                .iter()
+                .any(|check| check.name == "红外防欺骗模型"
+                    && check.message.contains("cameras.ir"))
         );
 
         config.liveness.ir_threshold = 0.5;
         config.cameras.ir = "/dev/video2".to_string();
         let findings = config_findings(&config);
-        assert!(!findings.iter().any(|check| check.name == "红外防欺骗模型"));
+        assert!(
+            !findings
+                .iter()
+                .any(|check| check.name == "红外防欺骗模型")
+        );
         assert!(!findings.iter().any(|check| check.level == Level::Error));
     }
 
@@ -399,6 +455,26 @@ mod tests {
             messages
                 .iter()
                 .any(|message| message.contains("max_seconds"))
+        );
+    }
+
+    #[test]
+    fn config_warns_about_nonphysical_rgb_opt_ins() {
+        let trusts_rgb = |config: &Config| {
+            config_findings(config)
+                .iter()
+                .any(|check| check.name == "RGB camera trust")
+        };
+        let mut config = Config::default();
+        assert!(!trusts_rgb(&config));
+        config.cameras.allow_nonphysical_rgb = true;
+        assert!(trusts_rgb(&config));
+        config.cameras.allow_untrusted_rgb_writers = true;
+        assert!(
+            config_findings(&config)
+                .iter()
+                .any(|check| check.level == Level::Warning
+                    && check.message.contains("allow_untrusted_rgb_writers"))
         );
     }
 

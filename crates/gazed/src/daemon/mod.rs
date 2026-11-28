@@ -62,6 +62,10 @@ const VERIFY_TOO_DARK_TIMEOUT: Duration = Duration::from_secs(1);
 const DURESS_LOCKED_DIAGNOSTIC: &str = "Face authentication is locked after a duress signal. Log in with your password, or run `gaze duress --clear`.";
 const LID_CLOSED_DIAGNOSTIC: &str = "The laptop lid is closed, so face authentication was skipped.";
 const DURESS_MODEL_MISSING_DIAGNOSTIC: &str = "Duress detection is on, but its eye model could not load, so closed eyes will not lock face authentication. Check `journalctl -u gazed`.";
+const ATTENTION_MODEL_MISSING_DIAGNOSTIC: &str = "The attention check is on, but its eye model could not load, so face authentication is off until it does. Check `journalctl -u gazed`.";
+const ATTENTION_HELD_DIAGNOSTIC: &str =
+    "Face matched. Look at the camera with your eyes open to continue.";
+const ATTENTION_GATE_DIAGNOSTIC: &str = "Face matched, but you were not facing the camera with your eyes open. Look at the screen and try again, or turn off auth.require_attention.";
 const LIVENESS_GATE_DIAGNOSTIC: &str = "Face matched, but the liveness check did not pass. Move slightly and try again, or lower liveness.threshold.";
 const VERIFY_NO_FACE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Bounds a face that stays badly framed: it refreshes the no-face deadline without ever
@@ -451,7 +455,7 @@ pub struct ModelSessions {
 }
 
 fn ir_models_needed(config: &Config) -> bool {
-    !config.cameras.ir.trim().is_empty()
+    config.cameras.has_ir()
 }
 
 impl ModelSessions {
@@ -567,6 +571,18 @@ mod tests {
             config.cameras.ir = source.into();
             assert!(ir_models_needed(&config));
         }
+
+        config.cameras.ir = String::new();
+        config.cameras.fallback = vec![gaze_core::config::CameraSystem {
+            rgb: "usb:045e:0991".into(),
+            ir: "/dev/video6".into(),
+            ir_frame_width: None,
+            ir_frame_height: None,
+            emitter_enabled: false,
+            ir_source_marker: None,
+            ir_source_driver: None,
+        }];
+        assert!(ir_models_needed(&config));
     }
 
     #[test]

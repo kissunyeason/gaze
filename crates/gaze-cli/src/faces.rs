@@ -31,9 +31,12 @@ fn spectrum_badge_state(enrolled: bool, configured: bool) -> SpectrumBadge {
 fn spectrum_badge(label: &str, enrolled: bool, configured: bool) -> String {
     let badge = format!("[{label}]");
     match spectrum_badge_state(enrolled, configured) {
-        SpectrumBadge::Enrolled => style(badge).green().bold().to_string(),
-        SpectrumBadge::Missing => style(badge).yellow().bold().to_string(),
-        SpectrumBadge::Unused => style(badge).dim().to_string(),
+        SpectrumBadge::Enrolled => style(format!("{badge} ready")).green().bold().to_string(),
+        SpectrumBadge::Missing => style(format!("{badge} needs captures"))
+            .yellow()
+            .bold()
+            .to_string(),
+        SpectrumBadge::Unused => style(format!("{badge} unused")).dim().to_string(),
     }
 }
 
@@ -50,7 +53,9 @@ async fn print_faces_json(proxy: &GazeProxy<'_>, user: &str) -> anyhow::Result<(
     let faces = match proxy.list_faces(user).await {
         Ok(faces) => faces,
         Err(err) if dbus_is_file_not_found(&err) => Vec::new(),
-        Err(err) => exit_with_error(&describe_dbus_error(proxy, "获取人脸列表失败", &err).await),
+        Err(err) => {
+            exit_with_error(&describe_dbus_error(proxy, "获取人脸列表失败", &err).await)
+        }
     };
     let entries: Vec<String> = faces
         .iter()
@@ -168,7 +173,9 @@ pub async fn handle_remove_face(
         }
         Ok(false) => exit_face_not_found(face, user),
         Err(err) if dbus_is_file_not_found(&err) => exit_face_not_found(face, user),
-        Err(err) => exit_with_error(&describe_dbus_error(proxy, "删除人脸失败", &err).await),
+        Err(err) => {
+            exit_with_error(&describe_dbus_error(proxy, "删除人脸失败", &err).await)
+        }
     }
     Ok(())
 }
@@ -201,7 +208,9 @@ pub async fn handle_rename_face(
         }
         Ok(false) => exit_face_not_found(from, user),
         Err(err) if dbus_is_file_not_found(&err) => exit_face_not_found(from, user),
-        Err(err) => exit_with_error(&describe_dbus_error(proxy, "重命名人脸失败", &err).await),
+        Err(err) => {
+            exit_with_error(&describe_dbus_error(proxy, "重命名人脸失败", &err).await)
+        }
     }
     Ok(())
 }
@@ -211,23 +220,29 @@ pub async fn handle_duress(proxy: &GazeProxy<'_>, user: &str, clear: bool) -> an
     if clear {
         let cleared = match proxy.clear_duress(user).await {
             Ok(cleared) => cleared,
-            Err(err) => {
-                exit_with_error(&describe_dbus_error(proxy, "解除胁迫锁定失败", &err).await)
-            }
+            Err(err) => exit_with_error(
+                &describe_dbus_error(proxy, "解除胁迫锁定失败", &err).await,
+            ),
         };
         if cleared {
-            term.write_line(&format!("已为 {} 重新启用人脸认证。", style(user).bold()))?;
+            term.write_line(&format!(
+                "已为 {} 重新启用人脸认证。",
+                style(user).bold()
+            ))?;
         } else {
-            term.write_line(&format!("{} 的人脸认证并未被锁定。", style(user).bold()))?;
+            term.write_line(&format!(
+                "{} 的人脸认证并未被锁定。",
+                style(user).bold()
+            ))?;
         }
         return Ok(());
     }
 
     let locked = match proxy.duress_locked(user).await {
         Ok(locked) => locked,
-        Err(err) => {
-            exit_with_error(&describe_dbus_error(proxy, "读取胁迫锁定状态失败", &err).await)
-        }
+        Err(err) => exit_with_error(
+            &describe_dbus_error(proxy, "读取胁迫锁定状态失败", &err).await,
+        ),
     };
     if locked {
         term.write_line(&format!(
@@ -296,7 +311,9 @@ pub async fn handle_clear_user(proxy: &GazeProxy<'_>, user: &str, yes: bool) -> 
                 user
             ))?;
         }
-        Err(err) => exit_with_error(&describe_dbus_error(proxy, "清除用户失败", &err).await),
+        Err(err) => {
+            exit_with_error(&describe_dbus_error(proxy, "清除用户失败", &err).await)
+        }
     }
     Ok(())
 }

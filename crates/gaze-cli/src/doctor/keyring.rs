@@ -16,10 +16,7 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
     if let Some(warning) = gaze_security::storage::encryption_warning(storage) {
         report.warning("状态存储", warning, "请对保存 /var/lib/gaze 的文件系统启用全盘加密。在已解锁的机器上，root 仍可恢复 TPM 封装的数据。");
     } else {
-        report.pass(
-            "状态存储",
-            "dm-crypt 已保护所有可见的底层设备路径；解锁后 root 仍可恢复 TPM 中的机密",
-        );
+        report.pass("状态存储", "dm-crypt 已保护所有可见的底层设备路径；解锁后 root 仍可恢复 TPM 中的机密");
     }
     if !config.storage.encrypt_templates {
         report.warning(
@@ -57,7 +54,10 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
             return;
         };
         if node_openable(meta.uid(), meta.gid(), meta.mode(), &credentials) {
-            report.pass("TPM", format!("TPM 设备存在，且 gazed 可以打开 {path}"));
+            report.pass(
+                "TPM",
+                format!("TPM 设备存在，且 gazed 可以打开 {path}"),
+            );
             return;
         }
         blocked.push(format!(
@@ -257,19 +257,53 @@ pub(super) fn keyring_record_state(
     )
 }
 
+fn oo7_replaces_gnome_keyring() -> bool {
+    let installed = |module: &str| {
+        pam_search_dirs()
+            .iter()
+            .any(|dir| dir.join(module).exists())
+    };
+    installed("pam_oo7.so") && !installed("pam_gnome_keyring.so")
+}
+
+pub(super) fn report_keyring_off(report: &mut Report, oo7_stays_locked_at_face_login: bool) {
+    let enable = format!(
+        "set `unlock_gnome_keyring = true` under [storage] in {CONFIG_PATH} \
+         (it also needs `encrypt_templates = true` and [liveness] `enabled = true`), \
+         restart gazed, then run `sudo gaze keyring`."
+    );
+    if oo7_stays_locked_at_face_login {
+        report.warning(
+            "密钥环",
+            "GDM face login is on, but nothing unlocks the oo7 keyring after it, so Chrome and \
+             other Chromium or Electron apps can delete their saved website logins",
+            format!(
+                "Either set `abort_before_first_resume = true` under [auth] in {CONFIG_PATH} and \
+                 restart gazed, so the first login after boot takes your password, or turn on \
+                 keyring unlock: {enable}"
+            ),
+        );
+    } else {
+        report.off(
+            "密钥环",
+            "GDM 或 greetd 人脸登录后的 GNOME 密钥环解锁已关闭",
+            format!("Turn it on: {enable}"),
+        );
+    }
+}
+
 pub(super) fn check_keyring(report: &mut Report, username: &str, config: Option<&Config>) {
     let Some(config) = config else {
         return;
     };
     if !config.storage.unlock_gnome_keyring {
-        report.off(
-            "密钥环",
-            "GDM 或 greetd 人脸登录后的 GNOME 密钥环解锁已关闭",
-            format!(
-                "Turn it on: set `unlock_gnome_keyring = true` under [storage] in {CONFIG_PATH} \
-                 (it also needs `encrypt_templates = true` and [liveness] `enabled = true`), \
-                 restart gazed, then run `sudo gaze keyring`."
-            ),
+        let gdm_face_login =
+            gdm_face_auth_from_dconf() == Some(true) || Path::new(GDM_FACE_OVERRIDE_PATH).exists();
+        report_keyring_off(
+            report,
+            gdm_face_login
+                && !config.auth.abort_before_first_resume
+                && oo7_replaces_gnome_keyring(),
         );
         return;
     }
@@ -378,9 +412,10 @@ pub(super) fn report_greeter_keyring_policy(report: &mut Report, policy: ModuleS
         selinux::policy_path(module)
     );
     match policy {
-        ModuleState::Loaded => {
-            report.pass(NAME, format!("已加载 {module}，登录界面可以读取密钥环记录"))
-        }
+        ModuleState::Loaded => report.pass(
+            NAME,
+            format!("已加载 {module}，登录界面可以读取密钥环记录"),
+        ),
         ModuleState::NotLoaded => report.error(
             NAME,
             format!(
@@ -481,11 +516,8 @@ pub(super) fn check_kwallet(report: &mut Report, username: &str, config: Option<
         return;
     }
     if let Err(err) = config.storage.validate_keyring(&config.liveness) {
-        report.error(
-            "KWallet",
-            format!("已启用 KWallet 解锁，但当前不可用：{err}"),
-            "请启用 TPM 模板加密与活体检测，或在 `gaze config` 中关闭 KWallet 解锁。",
-        );
+        report.error("KWallet", format!("已启用 KWallet 解锁，但当前不可用：{err}"),
+            "请启用 TPM 模板加密与活体检测，或在 `gaze config` 中关闭 KWallet 解锁。");
         return;
     }
     if !pam_search_dirs()
@@ -538,6 +570,26 @@ pub(super) fn check_kwallet(report: &mut Report, username: &str, config: Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyring_unlock_off_is_a_warning_only_when_oo7_stays_locked_at_face_login() {
+        let reported = |locked| {
+            let mut report = Report::default();
+            report_keyring_off(&mut report, locked);
+            let check = report.checks.into_iter().next().unwrap();
+            (check.level, check.message, check.fix.unwrap_or_default())
+        };
+
+        let (level, _, fix) = reported(false);
+        assert_eq!(level, Level::Off);
+        assert!(fix.contains("sudo gaze keyring"), "{fix}");
+
+        let (level, message, fix) = reported(true);
+        assert_eq!(level, Level::Warning);
+        assert!(message.contains("oo7"), "{message}");
+        assert!(fix.contains("abort_before_first_resume = true"), "{fix}");
+        assert!(fix.contains("sudo gaze keyring"), "{fix}");
+    }
 
     #[test]
     fn a_missing_keyring_policy_is_only_an_error_once_the_module_store_was_read() {

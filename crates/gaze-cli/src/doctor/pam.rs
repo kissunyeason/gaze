@@ -285,11 +285,17 @@ pub(super) fn check_pam(report: &mut Report) {
     let insecure = insecurely_owned(&modules);
     if !modules.is_empty() {
         if insecure.is_empty() {
-            report.pass("PAM 权限", "已安装模块属于 root，且同组与其他用户不可写");
+            report.pass(
+                "PAM 权限",
+                "已安装模块属于 root，且同组与其他用户不可写",
+            );
         } else {
             report.error(
                 "PAM 权限",
-                format!("存在不安全的归属或写权限：{}", insecure.join(", ")),
+                format!(
+                    "存在不安全的归属或写权限：{}",
+                    insecure.join(", ")
+                ),
                 "请用软件包管理器恢复这些文件；不要使用可写的 PAM 模块。",
             );
         }
@@ -432,7 +438,9 @@ pub(super) fn check_elevation_pam(report: &mut Report) {
     } else if Path::new(PAM_SUDO_OPTOUT_PATH).exists() {
         report.off(
             "提权 PAM",
-            format!("{ELEVATION_PAM_SERVICE} 的人脸认证已被排除，终端提权始终要求输入密码"),
+            format!(
+                "{ELEVATION_PAM_SERVICE} 的人脸认证已被排除，终端提权始终要求输入密码"
+            ),
             format!(
                 "重新开启方法：`sudo rm {PAM_SUDO_OPTOUT_PATH}`。{}",
                 shared_stack_hint()
@@ -441,7 +449,9 @@ pub(super) fn check_elevation_pam(report: &mut Report) {
     } else {
         report.warning(
             "提权 PAM",
-            format!("{ELEVATION_PAM_SERVICE} 服务不会调用 Gaze 模块，终端提权会直接落到密码栈"),
+            format!(
+                "{ELEVATION_PAM_SERVICE} 服务不会调用 Gaze 模块，终端提权会直接落到密码栈"
+            ),
             shared_stack_hint(),
         );
     }
@@ -551,7 +561,9 @@ pub(super) fn report_sudo_policy(
     match policy {
         SudoPolicy::AuthenticatesInvoker => report.pass(
             NAME,
-            format!("sudo 认证的是 {username}，其已录入的人脸可用于终端提权"),
+            format!(
+                "sudo 认证的是 {username}，其已录入的人脸可用于终端提权"
+            ),
         ),
         SudoPolicy::AuthenticatesTarget(option) => {
             let fix = if suse {
