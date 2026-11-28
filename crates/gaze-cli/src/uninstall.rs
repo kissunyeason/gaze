@@ -356,10 +356,7 @@ fn build_uninstall_plan(keep_data: bool) -> Vec<(&'static str, String)> {
         ));
     }
 
-    plan.push((
-        "重置 GNOME 锁屏与登录设置",
-        reset_gnome_user_settings_cmd(),
-    ));
+    plan.push(("重置 GNOME 锁屏与登录设置", reset_gnome_user_settings_cmd()));
     plan.push((
         "移除各用户的 GNOME 扩展副本",
         "for d in /home/*/.local/share/gnome-shell/extensions /root/.local/share/gnome-shell/extensions; do \
@@ -375,10 +372,7 @@ fn build_uninstall_plan(keep_data: bool) -> Vec<(&'static str, String)> {
           done"
             .into(),
     ));
-    plan.push((
-        "移除 GDM 的 dconf 覆盖项",
-        remove_gdm_dconf_overrides_cmd(),
-    ));
+    plan.push(("移除 GDM 的 dconf 覆盖项", remove_gdm_dconf_overrides_cmd()));
     plan.push((
         "禁用 Cinnamon 扩展并删除其设置",
         reset_cinnamon_user_settings_cmd(),
@@ -395,10 +389,7 @@ fn build_uninstall_plan(keep_data: bool) -> Vec<(&'static str, String)> {
     }
 
     if which("pacman") && !which("pam-auth-update") && !which("authselect") {
-        plan.push((
-            "移除 Arch 的 PAM 配置",
-            remove_arch_pam_configuration_cmd(),
-        ));
+        plan.push(("移除 Arch 的 PAM 配置", remove_arch_pam_configuration_cmd()));
     }
 
     plan.push((
@@ -449,16 +440,10 @@ fn build_uninstall_plan(keep_data: bool) -> Vec<(&'static str, String)> {
     plan.push(("移除模型缓存", "sudo rm -rf /var/cache/gaze".into()));
     plan.push(("移除配置文件", "sudo rm -rf /etc/gaze".into()));
     if !keep_data {
-        plan.push((
-            "移除已录入的人脸数据",
-            "sudo rm -rf /var/lib/gaze".into(),
-        ));
+        plan.push(("移除已录入的人脸数据", "sudo rm -rf /var/lib/gaze".into()));
     }
 
-    plan.push((
-        "刷新 GNOME 系统设置",
-        refresh_gnome_system_settings_cmd(),
-    ));
+    plan.push(("刷新 GNOME 系统设置", refresh_gnome_system_settings_cmd()));
     plan.push(("重新加载 systemd", "sudo systemctl daemon-reload".into()));
 
     plan
@@ -468,10 +453,7 @@ pub fn handle_uninstall(yes: bool, keep_data: bool, dry_run: bool) -> anyhow::Re
     let term = Term::stdout();
     let plan = build_uninstall_plan(keep_data);
 
-    term.write_line(&format!(
-        "\n{}\n",
-        style("Gaze 卸载计划").red().bold()
-    ))?;
+    term.write_line(&format!("\n{}\n", style("Gaze 卸载计划").red().bold()))?;
     for (i, (desc, cmd)) in plan.iter().enumerate() {
         term.write_line(&format!(
             "  {} {}\n    {}",
@@ -723,10 +705,7 @@ mod tests {
     fn uninstall_plan_removes_per_user_extensions_and_core_dumps() {
         let plan = build_uninstall_plan(true);
         assert!(plan_has(&plan, "移除各用户的 GNOME 扩展副本"));
-        assert!(plan_has(
-            &plan,
-            "禁用 Cinnamon 扩展并删除其设置"
-        ));
+        assert!(plan_has(&plan, "禁用 Cinnamon 扩展并删除其设置"));
         assert!(plan_has(&plan, "移除 gaze 的 core dump 文件"));
 
         let (_, cmd) = plan
@@ -991,10 +970,7 @@ mod tests {
         assert_eq!(before, labels.len(), "计划中存在重复的步骤名称");
 
         for (label, command) in &plan {
-            assert!(
-                !label.is_empty(),
-                "每个步骤都需要一个展示给用户的名称"
-            );
+            assert!(!label.is_empty(), "每个步骤都需要一个展示给用户的名称");
             assert!(
                 !command.trim().is_empty(),
                 "step {label:?} has nothing to run"

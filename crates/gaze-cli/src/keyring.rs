@@ -11,11 +11,7 @@ fn ensure_backend_enabled(config: &Config, backend: Backend) -> anyhow::Result<(
         Backend::Gnome => config.storage.unlock_gnome_keyring,
         Backend::KWallet => config.storage.unlock_kwallet,
     };
-    anyhow::ensure!(
-        enabled,
-        "请先用 gaze config 启用 {} 解锁",
-        backend.name()
-    );
+    anyhow::ensure!(enabled, "请先用 gaze config 启用 {} 解锁", backend.name());
     Ok(())
 }
 

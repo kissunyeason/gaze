@@ -285,11 +285,7 @@ enum Commands {
             help = "Show recognition metrics and diagnostic details"
         )]
         verbose: bool,
-        #[arg(
-            short,
-            long,
-            help = "不显示终端界面与任何输出，仅通过退出码报告结果"
-        )]
+        #[arg(short, long, help = "不显示终端界面与任何输出，仅通过退出码报告结果")]
         silent: bool,
     },
     /// 通过多角度引导采集录入一张人脸
@@ -384,11 +380,7 @@ enum Commands {
         verbose: bool,
         #[arg(short, long, help = "检查该用户的录入情况")]
         user: Option<String>,
-        #[arg(
-            short,
-            long,
-            help = "测试检测、识别与活体模型的推理速度"
-        )]
+        #[arg(short, long, help = "测试检测、识别与活体模型的推理速度")]
         benchmark: bool,
         #[arg(long, conflicts_with = "report", help = "以 JSON 输出结果")]
         json: bool,
@@ -566,10 +558,7 @@ async fn handle_enroll(
     }
     let _ = proxy.release().await;
     if is_cancelled {
-        Term::stderr().write_line(&format!(
-            "\\n{} 已取消录入",
-            style("✗").red().bold()
-        ))?;
+        Term::stderr().write_line(&format!("\\n{} 已取消录入", style("✗").red().bold()))?;
         std::process::exit(130);
     }
     if is_completed {
@@ -603,9 +592,7 @@ async fn handle_test(
         Ok(faces) => !faces.is_empty(),
         Err(ref e) if gaze_core::dbus::dbus_is_file_not_found(e) => false,
         Err(_) if silent => std::process::exit(1),
-        Err(e) => {
-            exit_with_error(&describe_dbus_error(proxy, "读取已录入人脸失败", &e).await)
-        }
+        Err(e) => exit_with_error(&describe_dbus_error(proxy, "读取已录入人脸失败", &e).await),
     };
     if !has_faces {
         if !silent {
@@ -923,10 +910,7 @@ async fn run() -> anyhow::Result<()> {
             let username = user.clone().unwrap_or_else(get_current_user);
             if *forget {
                 gaze_security::keyring::forget_for(backend, &username)?;
-                println!(
-                    "已删除 {username} 保存的 {} 凭据。",
-                    backend.name()
-                );
+                println!("已删除 {username} 保存的 {} 凭据。", backend.name());
             } else {
                 keyring::enroll(&username, &Config::load()?, backend)?;
             }
@@ -1037,8 +1021,7 @@ async fn run() -> anyhow::Result<()> {
                     Ok(loaded) => loaded,
                     Err(err) => match err.downcast_ref::<zbus::Error>() {
                         Some(dbus) => exit_with_error(
-                            &describe_dbus_error(&proxy, "读取配置失败", dbus)
-                                .await,
+                            &describe_dbus_error(&proxy, "读取配置失败", dbus).await,
                         ),
                         None => return Err(err),
                     },
@@ -1061,12 +1044,7 @@ async fn run() -> anyhow::Result<()> {
                     // Asking up front keeps a refused password from discarding every answer.
                     if let Err(err) = proxy.authorize_settings().await {
                         exit_with_error(
-                            &describe_dbus_error(
-                                &proxy,
-                                "修改设置未获授权",
-                                &err,
-                            )
-                            .await,
+                            &describe_dbus_error(&proxy, "修改设置未获授权", &err).await,
                         );
                     }
                     run_config_wizard(&Term::stdout(), &proxy, config, keyring_supported).await?

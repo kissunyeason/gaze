@@ -29,10 +29,7 @@ pub const PARALLEL_CAPTURE_LABELS: [&str; 3] = [
     "总是（同时采集 RGB 与红外）",
 ];
 pub const START_DELAY_SCOPE_OPTIONS: [&str; 2] = ["all", "screen_lock"];
-pub const START_DELAY_SCOPE_LABELS: [&str; 2] = [
-    "所有人脸认证（含 sudo）",
-    "仅屏幕锁定",
-];
+pub const START_DELAY_SCOPE_LABELS: [&str; 2] = ["所有人脸认证（含 sudo）", "仅屏幕锁定"];
 // Clients validate syntax independently of the daemon's installed vendor runtime.
 pub const INFERENCE_EXECUTION_PROVIDER_OPTIONS: [&str; 4] = ["cpu", "auto", "openvino", "vitis"];
 pub const INFERENCE_EXECUTION_PROVIDER_LABELS: [&str; 4] =
@@ -575,9 +572,9 @@ impl CameraConfig {
         }
         match (self.ir_frame_width, self.ir_frame_height) {
             (None, None) => {}
-            (Some(_), None) | (None, Some(_)) => anyhow::bail!(
-                "cameras.ir_frame_width 与 cameras.ir_frame_height 必须同时设置"
-            ),
+            (Some(_), None) | (None, Some(_)) => {
+                anyhow::bail!("cameras.ir_frame_width 与 cameras.ir_frame_height 必须同时设置")
+            }
             (Some(width), Some(height)) => {
                 if !ir_frame_dimension_valid(width) || !ir_frame_dimension_valid(height) {
                     anyhow::bail!(
@@ -1189,9 +1186,7 @@ impl Config {
         }
         let value = item.as_value().filter(|_| !item.is_table_like());
         let Some(value) = value else {
-            anyhow::bail!(
-                "`{key}` 是一个配置段；请指定其中的具体设置，例如 `{key}.<name>`"
-            );
+            anyhow::bail!("`{key}` 是一个配置段；请指定其中的具体设置，例如 `{key}.<name>`");
         };
         Ok(match value.as_str() {
             Some(text) => text.to_string(),

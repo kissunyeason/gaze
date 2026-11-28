@@ -254,8 +254,8 @@ pub async fn run_config_wizard(
 
 fn edit_cameras(term: &Term, theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
     let _ = term;
-    let mut cameras = gaze_vision::camera::rgb_choices()
-        .map_err(|e| anyhow::anyhow!("无法列出摄像头：{e}"))?;
+    let mut cameras =
+        gaze_vision::camera::rgb_choices().map_err(|e| anyhow::anyhow!("无法列出摄像头：{e}"))?;
     ensure_configured_source_listed(&mut cameras, config.cameras.rgb.first());
     let mut default_cam_idx =
         gaze_vision::camera::source_index(&cameras, config.cameras.rgb.first());
@@ -418,16 +418,12 @@ fn edit_authentication(
     let _ = term;
     term.write_line("On KDE lock/login screens, requiring confirmation uses your password instead of face unlock.")?;
     config.auth.require_confirmation_lock_screen = Confirm::with_theme(theme)
-        .with_prompt(
-            "锁屏界面在人脸匹配后需要确认（按回车/认证/确定）",
-        )
+        .with_prompt("锁屏界面在人脸匹配后需要确认（按回车/认证/确定）")
         .default(config.auth.require_confirmation_lock_screen)
         .interact()?;
 
     config.auth.require_confirmation_elevation = Confirm::with_theme(theme)
-        .with_prompt(
-            "提权认证（sudo、polkit 等）在人脸匹配后需要确认（按回车/认证/确定）",
-        )
+        .with_prompt("提权认证（sudo、polkit 等）在人脸匹配后需要确认（按回车/认证/确定）")
         .default(config.auth.require_confirmation_elevation)
         .interact()?;
 
@@ -627,9 +623,7 @@ fn edit_camera_tuning(
             config.cameras.parallel_capture = "never".to_string();
         } else {
             let capture_idx = Select::with_theme(theme)
-                .with_prompt(
-                    "同时采集 RGB 与红外（更快，但部分摄像头做不到）",
-                )
+                .with_prompt("同时采集 RGB 与红外（更快，但部分摄像头做不到）")
                 .items(gaze_core::config::PARALLEL_CAPTURE_LABELS.as_slice())
                 .default(config.cameras.parallel_capture_index() as usize)
                 .interact()?;
@@ -652,11 +646,7 @@ fn enroll_keyring(config: &Config, backend: gaze_security::keyring::Backend) -> 
         command.arg("--kwallet");
     }
     let status = command.status()?;
-    anyhow::ensure!(
-        status.success(),
-        "{} 密码录入未完成",
-        backend.name()
-    );
+    anyhow::ensure!(status.success(), "{} 密码录入未完成", backend.name());
     Ok(())
 }
 

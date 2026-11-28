@@ -16,7 +16,10 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
     if let Some(warning) = gaze_security::storage::encryption_warning(storage) {
         report.warning("状态存储", warning, "请对保存 /var/lib/gaze 的文件系统启用全盘加密。在已解锁的机器上，root 仍可恢复 TPM 封装的数据。");
     } else {
-        report.pass("状态存储", "dm-crypt 已保护所有可见的底层设备路径；解锁后 root 仍可恢复 TPM 中的机密");
+        report.pass(
+            "状态存储",
+            "dm-crypt 已保护所有可见的底层设备路径；解锁后 root 仍可恢复 TPM 中的机密",
+        );
     }
     if !config.storage.encrypt_templates {
         report.warning(
@@ -54,10 +57,7 @@ pub(super) fn check_tpm(report: &mut Report, config: Option<&Config>) {
             return;
         };
         if node_openable(meta.uid(), meta.gid(), meta.mode(), &credentials) {
-            report.pass(
-                "TPM",
-                format!("TPM 设备存在，且 gazed 可以打开 {path}"),
-            );
+            report.pass("TPM", format!("TPM 设备存在，且 gazed 可以打开 {path}"));
             return;
         }
         blocked.push(format!(
@@ -412,10 +412,9 @@ pub(super) fn report_greeter_keyring_policy(report: &mut Report, policy: ModuleS
         selinux::policy_path(module)
     );
     match policy {
-        ModuleState::Loaded => report.pass(
-            NAME,
-            format!("已加载 {module}，登录界面可以读取密钥环记录"),
-        ),
+        ModuleState::Loaded => {
+            report.pass(NAME, format!("已加载 {module}，登录界面可以读取密钥环记录"))
+        }
         ModuleState::NotLoaded => report.error(
             NAME,
             format!(
@@ -516,8 +515,11 @@ pub(super) fn check_kwallet(report: &mut Report, username: &str, config: Option<
         return;
     }
     if let Err(err) = config.storage.validate_keyring(&config.liveness) {
-        report.error("KWallet", format!("已启用 KWallet 解锁，但当前不可用：{err}"),
-            "请启用 TPM 模板加密与活体检测，或在 `gaze config` 中关闭 KWallet 解锁。");
+        report.error(
+            "KWallet",
+            format!("已启用 KWallet 解锁，但当前不可用：{err}"),
+            "请启用 TPM 模板加密与活体检测，或在 `gaze config` 中关闭 KWallet 解锁。",
+        );
         return;
     }
     if !pam_search_dirs()

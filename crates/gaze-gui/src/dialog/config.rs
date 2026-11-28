@@ -288,9 +288,7 @@ fn camera_subtitle(options: &[(String, String)], configured: &str) -> Option<Str
     if is_listed_source(options, configured) {
         None
     } else {
-        Some(format!(
-            "当前配置为 {configured}，本列表无法显示"
-        ))
+        Some(format!("当前配置为 {configured}，本列表无法显示"))
     }
 }
 
@@ -557,16 +555,10 @@ fn build_config_dialog(
         row
     };
 
-    let rgb_threshold_row = make_threshold_row(
-        "RGB 识别阈值",
-        "匹配所需的 RGB 最小相似度",
-    );
+    let rgb_threshold_row = make_threshold_row("RGB 识别阈值", "匹配所需的 RGB 最小相似度");
     security_group.add(&rgb_threshold_row);
 
-    let ir_threshold_row = make_threshold_row(
-        "红外识别阈值",
-        "匹配所需的红外最小相似度",
-    );
+    let ir_threshold_row = make_threshold_row("红外识别阈值", "匹配所需的红外最小相似度");
     security_group.add(&ir_threshold_row);
 
     let hardware_group = libadwaita::PreferencesGroup::new();
@@ -611,8 +603,7 @@ fn build_config_dialog(
 
     let ir_frame_size_row = libadwaita::ExpanderRow::new();
     ir_frame_size_row.set_title("覆盖红外画面尺寸");
-    ir_frame_size_row
-        .set_subtitle("自动模式下红外画面发绿或异常时，强制使用固定分辨率");
+    ir_frame_size_row.set_subtitle("自动模式下红外画面发绿或异常时，强制使用固定分辨率");
     ir_frame_size_row.set_show_enable_switch(true);
     ir_frame_size_row.set_enable_expansion(false);
     hardware_group.add(&ir_frame_size_row);
@@ -633,8 +624,7 @@ fn build_config_dialog(
 
     let emitter_row = libadwaita::ActionRow::new();
     emitter_row.set_title("强制开启红外补光");
-    emitter_row
-        .set_subtitle("覆盖补光控制（仅在红外补光始终不亮时使用）");
+    emitter_row.set_subtitle("覆盖补光控制（仅在红外补光始终不亮时使用）");
     let emitter_switch = gtk4::Switch::new();
     emitter_switch.set_valign(gtk4::Align::Center);
     emitter_row.add_suffix(&emitter_switch);
@@ -642,9 +632,7 @@ fn build_config_dialog(
 
     let parallel_capture_row = libadwaita::ComboRow::new();
     parallel_capture_row.set_title("RGB + 红外并行采集");
-    parallel_capture_row.set_subtitle(
-        "混合认证更快，但部分摄像头无法同时输出两路画面",
-    );
+    parallel_capture_row.set_subtitle("混合认证更快，但部分摄像头无法同时输出两路画面");
     let parallel_capture_model = gtk4::StringList::new(&PARALLEL_CAPTURE_LABELS);
     parallel_capture_row.set_model(Some(&parallel_capture_model));
     hardware_group.add(&parallel_capture_row);
@@ -671,8 +659,7 @@ fn build_config_dialog(
     );
     min_face_size_ratio_row.set_digits(2);
     min_face_size_ratio_row.set_title("最小人脸尺寸比例");
-    min_face_size_ratio_row
-        .set_subtitle("录入时可接受的最小人脸；值越小允许的距离越远");
+    min_face_size_ratio_row.set_subtitle("录入时可接受的最小人脸；值越小允许的距离越远");
     enrollment_group.add(&min_face_size_ratio_row);
 
     let liveness_group = libadwaita::PreferencesGroup::new();
@@ -728,8 +715,7 @@ fn build_config_dialog(
 
     let abort_first_resume_row = libadwaita::ActionRow::new();
     abort_first_resume_row.set_title("要求先休眠一次");
-    abort_first_resume_row
-        .set_subtitle("系统完成一次休眠唤醒前禁止认证");
+    abort_first_resume_row.set_subtitle("系统完成一次休眠唤醒前禁止认证");
     let abort_first_resume_switch = gtk4::Switch::new();
     abort_first_resume_switch.set_valign(gtk4::Align::Center);
     abort_first_resume_row.add_suffix(&abort_first_resume_switch);
@@ -745,9 +731,8 @@ fn build_config_dialog(
 
     let require_confirm_elevation_row = libadwaita::ActionRow::new();
     require_confirm_elevation_row.set_title("提权认证需要确认");
-    require_confirm_elevation_row.set_subtitle(
-        "sudo、polkit 等提权提示在人脸匹配后，需按回车或点击“确定”才授权",
-    );
+    require_confirm_elevation_row
+        .set_subtitle("sudo、polkit 等提权提示在人脸匹配后，需按回车或点击“确定”才授权");
     let require_confirm_elevation_switch = gtk4::Switch::new();
     require_confirm_elevation_switch.set_valign(gtk4::Align::Center);
     require_confirm_elevation_row.add_suffix(&require_confirm_elevation_switch);

@@ -225,8 +225,7 @@ impl Report {
         if full && off > 0 {
             out.push_str(&format!(
                 "{}\n",
-                style("○ 表示功能本身正常，但你已将其关闭；其下方一行是开启方法。")
-                    .dim()
+                style("○ 表示功能本身正常，但你已将其关闭；其下方一行是开启方法。").dim()
             ));
         }
         if !full {
@@ -362,10 +361,7 @@ fn check_platform(report: &mut Report) {
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     report.pass(
         "CPU",
-        format!(
-            "{} 不需要 x86 AVX2 检查",
-            std::env::consts::ARCH
-        ),
+        format!("{} 不需要 x86 AVX2 检查", std::env::consts::ARCH),
     );
 }
 
@@ -432,11 +428,7 @@ mod tests {
     #[test]
     fn a_feature_switched_off_is_not_a_checkmark_and_still_says_how_to_turn_it_on() {
         let mut report = Report::default();
-        report.off(
-            "GDM 登录人脸认证",
-            "off",
-            "Turn it on: flip the switch.",
-        );
+        report.off("GDM 登录人脸认证", "off", "Turn it on: flip the switch.");
 
         let check = &report.checks[0];
         assert_eq!(check.level, Level::Off);

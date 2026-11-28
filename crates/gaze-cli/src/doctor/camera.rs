@@ -79,10 +79,7 @@ pub(super) fn check_gstreamer_plugins(report: &mut Report) -> bool {
         Ok(missing) => {
             report.error(
                 "GStreamer 插件",
-                format!(
-                    "缺少必需的摄像头元件：{}",
-                    missing.join(", ")
-                ),
+                format!("缺少必需的摄像头元件：{}", missing.join(", ")),
                 gstreamer_package_hint(),
             );
             false
@@ -312,10 +309,7 @@ fn check_ir_node(
         // verified by an unprivileged doctor.
         report.warning(
             ir_name,
-            format!(
-                "当前用户无法读取桥接标记文件 {}",
-                bridge.marker
-            ),
+            format!("当前用户无法读取桥接标记文件 {}", bridge.marker),
             "运行 `sudo gaze doctor` 验证桥接来源。",
         );
         return;
@@ -329,10 +323,7 @@ fn check_ir_node(
         ),
         Ok(source) => report.pass(
             ir_name,
-            format!(
-                "桥接标记 {} 指向物理来源 {source}",
-                bridge.marker
-            ),
+            format!("桥接标记 {} 指向物理来源 {source}", bridge.marker),
         ),
         Err(err) => report.error(
             ir_name,

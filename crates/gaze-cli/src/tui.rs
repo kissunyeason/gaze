@@ -399,11 +399,7 @@ fn render_enroll(frame: &mut Frame<'_>, screen: &EnrollScreen<'_>) {
         Line::from(""),
         Line::from("请按提示调整人脸位置，居中后自动采集。"),
     ])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("采集提示"),
-    )
+    .block(Block::default().borders(Borders::ALL).title("采集提示"))
     .alignment(Alignment::Center)
     .wrap(Wrap { trim: true });
     frame.render_widget(prompt, chunks[1]);

@@ -63,10 +63,7 @@ pub(super) fn check_config(report: &mut Report) -> Option<Config> {
                 .map(|contents| unknown_config_keys(&contents))
                 .unwrap_or_default();
             if unknown.is_empty() {
-                report.pass(
-                    "配置",
-                    format!("{CONFIG_PATH} 解析成功"),
-                );
+                report.pass("配置", format!("{CONFIG_PATH} 解析成功"));
             } else {
                 report.warning(
                     "配置",
@@ -258,8 +255,7 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
         findings.push(Check {
             level: Level::Pass,
             name: "配置项取值",
-            message: "摄像头、安全、录入、推理与活体检测配置均有效"
-                .to_string(),
+            message: "摄像头、安全、录入、推理与活体检测配置均有效".to_string(),
             fix: None,
         });
     }
@@ -327,26 +323,21 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
             level: Level::Warning,
             name: "活体检测",
             message: "活体防欺骗已关闭".to_string(),
-            fix: Some(
-                "除非你明确接受照片或屏幕欺骗的风险，否则请启用 [liveness]。"
-                    .to_string(),
-            ),
+            fix: Some("除非你明确接受照片或屏幕欺骗的风险，否则请启用 [liveness]。".to_string()),
         });
     }
     if config.liveness.ir_model && !config.liveness.enabled {
         findings.push(Check {
             level: Level::Warning,
             name: "红外防欺骗模型",
-            message: "liveness.ir_model 为 true，但活体检测已关闭，因此不会生效"
-                .to_string(),
+            message: "liveness.ir_model 为 true，但活体检测已关闭，因此不会生效".to_string(),
             fix: Some("请启用 [liveness] 或移除 ir_model。".to_string()),
         });
     } else if config.liveness.ir_model && !config.cameras.has_ir() {
         findings.push(Check {
             level: Level::Warning,
             name: "红外防欺骗模型",
-            message: "liveness.ir_model 为 true，但 cameras.ir 为空，因此不会生效"
-                .to_string(),
+            message: "liveness.ir_model 为 true，但 cameras.ir 为空，因此不会生效".to_string(),
             fix: Some("请配置 cameras.ir 或移除 ir_model。".to_string()),
         });
     }
@@ -355,9 +346,7 @@ pub(super) fn config_findings(config: &Config) -> Vec<Check> {
             level: Level::Warning,
             name: "录入上限",
             message: "max_templates 为 0，模板淘汰会被禁用".to_string(),
-            fix: Some(
-                "请将 enrollment.max_templates 设为正数（默认 2）。".into(),
-            ),
+            fix: Some("请将 enrollment.max_templates 设为正数（默认 2）。".into()),
         });
     }
 
@@ -394,11 +383,7 @@ mod tests {
         config.liveness.ir_threshold = 0.5;
         config.cameras.ir = "/dev/video2".to_string();
         let findings = config_findings(&config);
-        assert!(
-            !findings
-                .iter()
-                .any(|check| check.name == "红外防欺骗模型")
-        );
+        assert!(!findings.iter().any(|check| check.name == "红外防欺骗模型"));
         assert!(!findings.iter().any(|check| check.level == Level::Error));
     }
 
